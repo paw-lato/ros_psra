@@ -1,0 +1,375 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="roboracer">
+
+  <!-- Kamera RealSense D435: oficjalny model (siatka, ramki optyczne) z pakietu realsense2_description -->
+  <xacro:include filename="$(find realsense2_description)/urdf/_d435.urdf.xacro"/>
+
+  <!-- ==================== WŁAŚCIWOŚCI (wymiary auta 1:10, F1TENTH/RoboRacer) ==================== -->
+  <!-- Wymiary dopasowane do siatek F1TENTH (meshes/f1tenth) -->
+  <xacro:property name="wheelbase" value="0.325"/>      <!-- Rozstaw osi [m] -->
+  <xacro:property name="track_width" value="0.245"/>    <!-- Rozstaw kół [m] -->
+  <xacro:property name="chassis_height" value="0.10"/>  <!-- Wysokość podwozia [m] -->
+  <xacro:property name="wheel_radius" value="0.05"/>    <!-- Promień koła [m] -->
+  <xacro:property name="wheel_width" value="0.045"/>    <!-- Szerokość koła [m] -->
+  <xacro:property name="chassis_length" value="${wheelbase + 0.12}"/> <!-- Długość podwozia [m] -->
+  <xacro:property name="chassis_width" value="0.20"/>   <!-- Szerokość podwozia [m] -->
+  <xacro:property name="chassis_mass" value="3.0"/>     <!-- Masa podwozia [kg] -->
+  <xacro:property name="wheel_mass" value="0.15"/>      <!-- Masa koła [kg] -->
+  <xacro:property name="steering_limit" value="0.42"/>  <!-- Maks. kąt skrętu kół [rad] (~24°) -->
+  <!-- Środek bryły podwozia (kolizja i inercja) względem base_link -->
+  <xacro:property name="chassis_origin" value="${wheelbase/2} 0 ${chassis_height/2}"/>
+
+  <!-- RPLiDAR C1: obudowa o średnicy 55mm i wysokości 40mm, waga ok. 110g -->
+  <xacro:property name="lidar_r" value="0.0275"/>
+  <xacro:property name="lidar_h" value="0.04"/>
+  <xacro:property name="lidar_mass" value="0.11"/>
+  <!-- Wysokość płaszczyzny skanu nad osią; dach karoserii sięga 0.157 m, więc lidar musi być wyżej -->
+  <xacro:property name="lidar_height" value="0.175"/>
+  <xacro:property name="lidar_base" value="${lidar_height - 0.03}"/> <!-- Spód obudowy lidaru -->
+
+  <!-- RealSense D435: punkt montażu (śruba statywu pod obudową) względem base_link -->
+  <xacro:property name="camera_mount_x" value="${wheelbase + 0.07}"/>
+  <xacro:property name="camera_mount_z" value="${chassis_height/2 + 0.0075}"/>
+
+  <!-- Górna płyta otwartego podwozia (dystanse na x = standoff_x0 i wheelbase, y = ±standoff_y) -->
+  <xacro:property name="plate_z" value="0.077"/>
+  <xacro:property name="plate_thk" value="0.004"/>
+  <xacro:property name="plate_top" value="${plate_z + plate_thk/2}"/>
+  <xacro:property name="standoff_x0" value="0.05"/>
+  <xacro:property name="standoff_y" value="0.07"/>
+
+  <!-- Wygląd nadwozia: shell = karoseria F1TENTH (siatka STL), open = otwarte podwozie z elektroniką -->
+  <xacro:arg name="body" default="shell"/>
+  <xacro:property name="body" value="$(arg body)"/>
+  <!-- package:// rozwiązuje RViz oraz Gazebo (eksport gazebo_ros w package.xml) -->
+  <xacro:property name="mesh_dir" value="package://roboracer_description/meshes/f1tenth"/>
+
+  <!-- ==================== MATERIAŁY ==================== -->
+  <!-- Materiał "aluminum" definiuje realsense2_description -->
+  <material name="tire_black"><color rgba="0.05 0.05 0.05 1.0"/></material>
+  <material name="rim_silver"><color rgba="0.75 0.75 0.78 1.0"/></material>
+  <material name="chassis_grey"><color rgba="0.18 0.18 0.2 1.0"/></material>
+  <material name="carbon"><color rgba="0.08 0.08 0.09 1.0"/></material>
+  <material name="suspension_red"><color rgba="0.75 0.1 0.1 1.0"/></material>
+  <material name="motor_metal"><color rgba="0.55 0.55 0.6 1.0"/></material>
+  <material name="battery_blue"><color rgba="0.1 0.25 0.6 1.0"/></material>
+  <material name="pcb_green"><color rgba="0.05 0.35 0.15 1.0"/></material>
+  <material name="vesc_blue"><color rgba="0.1 0.5 0.85 1.0"/></material>
+  <material name="lidar_cyan"><color rgba="0.0 0.8 0.8 1.0"/></material>
+  <material name="glass_black"><color rgba="0.02 0.02 0.03 1.0"/></material>
+  <material name="body_red"><color rgba="0.8 0.05 0.05 1.0"/></material>
+
+  <!-- Pomocnicze elementy wizualne (tylko wygląd, bez kolizji i masy).
+       Każdy element to osobny link na stałym przegubie, bo RViz koloruje cały link materiałem
+       pierwszego elementu wizualnego. Gazebo i tak scala takie linki z rodzicem. -->
+  <xacro:macro name="vpart" params="name parent xyz rpy mat **geometry">
+    <link name="${name}">
+      <visual>
+        <geometry><xacro:insert_block name="geometry"/></geometry>
+        <material name="${mat}"/>
+      </visual>
+    </link>
+    <joint name="${name}_joint" type="fixed">
+      <parent link="${parent}"/>
+      <child link="${name}"/>
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="vbox" params="name xyz size mat rpy:='0 0 0' parent:=base_link">
+    <xacro:vpart name="${name}" parent="${parent}" xyz="${xyz}" rpy="${rpy}" mat="${mat}">
+      <geometry><box size="${size}"/></geometry>
+    </xacro:vpart>
+  </xacro:macro>
+
+  <xacro:macro name="vcyl" params="name xyz r l mat rpy:='0 0 0' parent:=base_link">
+    <xacro:vpart name="${name}" parent="${parent}" xyz="${xyz}" rpy="${rpy}" mat="${mat}">
+      <geometry><cylinder radius="${r}" length="${l}"/></geometry>
+    </xacro:vpart>
+  </xacro:macro>
+
+  <!-- Inercja walca o masie m, promieniu r i wysokości h (oś walca = Z w ramce origin) -->
+  <xacro:macro name="cylinder_inertial" params="m r h *origin">
+    <inertial>
+      <xacro:insert_block name="origin"/>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(3*r*r + h*h)/12}" ixy="0" ixz="0"
+               iyy="${m*(3*r*r + h*h)/12}" iyz="0"
+               izz="${m*r*r/2}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Inercja prostopadłościanu o masie m i wymiarach x, y, z -->
+  <xacro:macro name="box_inertial" params="m x y z *origin">
+    <inertial>
+      <xacro:insert_block name="origin"/>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(y*y + z*z)/12}" ixy="0" ixz="0"
+               iyy="${m*(x*x + z*z)/12}" iyz="0"
+               izz="${m*(x*x + y*y)/12}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Pusty link główny na ziemi (REP-105); KDL nie obsługuje też inercji w linku root -->
+  <link name="base_footprint"/>
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <!-- base_footprint na ziemi, base_link na wysokości osi kół -->
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ==================== PODWOZIE (base_link w środku tylnej osi) ==================== -->
+  <link name="base_link">
+    <!-- Karoseria F1TENTH: siatka w mm, obrócona i przesunięta tak jak w f1tenth-dev/simulator -->
+    <xacro:if value="${body == 'shell'}">
+      <visual>
+        <origin xyz="0.46 -0.135 -0.180" rpy="${pi/2} 0 ${pi}"/>
+        <geometry><mesh filename="${mesh_dir}/chassis.stl" scale="0.000990 0.0009375 0.0009375"/></geometry>
+        <material name="body_red"/>
+      </visual>
+    </xacro:if>
+
+    <collision>
+      <origin xyz="${chassis_origin}" rpy="0 0 0"/>
+      <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
+    </collision>
+    <xacro:box_inertial m="${chassis_mass}" x="${chassis_length}" y="${chassis_width}" z="${chassis_height}">
+      <origin xyz="${chassis_origin}" rpy="0 0 0"/>
+    </xacro:box_inertial>
+  </link>
+
+  <!-- Otwarte podwozie w stylu F1TENTH: podwozie Traxxas + płyta z elektroniką na dystansach -->
+  <xacro:if value="${body == 'open'}">
+    <!-- Wanna podwozia i zderzaki na jej końcach -->
+    <xacro:property name="tub_front" value="${wheelbase/2 + chassis_length/2}"/>
+    <xacro:property name="tub_rear" value="${wheelbase/2 - chassis_length/2}"/>
+    <xacro:vbox name="chassis_tub" xyz="${wheelbase/2} 0 0" size="${chassis_length} 0.10 0.03" mat="chassis_grey"/>
+    <xacro:vbox name="bumper_front" xyz="${tub_front + 0.015} 0 -0.01" size="0.03 0.16 0.02" mat="carbon"/>
+    <xacro:vbox name="bumper_rear" xyz="${tub_rear - 0.015} 0 -0.005" size="0.03 0.14 0.02" mat="carbon"/>
+
+    <!-- Wahacze zawieszenia i wieże amortyzatorów przy każdej osi -->
+    <xacro:macro name="axle_parts" params="axle x tower_x">
+      <xacro:vbox name="${axle}_suspension_arms" xyz="${x} 0 -0.005" size="0.04 ${track_width - wheel_width - 0.01} 0.008" mat="suspension_red"/>
+      <xacro:vbox name="${axle}_shock_tower" xyz="${tower_x} 0 0.035" size="0.008 0.14 0.05" mat="carbon"/>
+    </xacro:macro>
+    <xacro:axle_parts axle="rear" x="0" tower_x="0.03"/>
+    <xacro:axle_parts axle="front" x="${wheelbase}" tower_x="${wheelbase - 0.03}"/>
+
+    <!-- Napęd: silnik, akumulator, regulator VESC -->
+    <xacro:vcyl name="motor" xyz="0.09 0.02 0.03" r="0.018" l="0.055" mat="motor_metal" rpy="0 ${pi/2} 0"/>
+    <xacro:vbox name="battery" xyz="0.19 -0.025 0.03" size="0.14 0.045 0.03" mat="battery_blue"/>
+    <xacro:vbox name="vesc" xyz="0.07 -0.04 0.088" size="0.05 0.04 0.015" mat="vesc_blue"/>
+
+    <!-- Dystanse i górna płyta z włókna węglowego -->
+    <xacro:macro name="standoff" params="name x y">
+      <xacro:vcyl name="${name}" xyz="${x} ${y} ${(0.015 + plate_z)/2}" r="0.004" l="${plate_z - 0.015}" mat="rim_silver"/>
+    </xacro:macro>
+    <xacro:standoff name="standoff_rear_left" x="${standoff_x0}" y="${standoff_y}"/>
+    <xacro:standoff name="standoff_rear_right" x="${standoff_x0}" y="${-standoff_y}"/>
+    <xacro:standoff name="standoff_front_left" x="${wheelbase}" y="${standoff_y}"/>
+    <xacro:standoff name="standoff_front_right" x="${wheelbase}" y="${-standoff_y}"/>
+    <xacro:vbox name="top_plate" xyz="${(standoff_x0 + wheelbase)/2 + 0.01} 0 ${plate_z}" size="${wheelbase - standoff_x0 + 0.06} 0.18 ${plate_thk}" mat="carbon"/>
+
+    <!-- Komputer pokładowy (Jetson): płytka + radiator -->
+    <xacro:vbox name="computer_board" xyz="0.17 0.02 0.083" size="0.10 0.08 0.008" mat="pcb_green"/>
+    <xacro:vbox name="computer_heatsink" xyz="0.17 0.02 0.1" size="0.06 0.06 0.025" mat="motor_metal"/>
+  </xacro:if>
+
+  <!-- Podstawa lidaru (od płyty do spodu obudowy) i uchwyt kamery (pod śrubą statywu) -->
+  <xacro:vbox name="lidar_mast" xyz="${wheelbase} 0 ${(plate_top + lidar_base)/2}" size="0.05 0.05 ${lidar_base - plate_top}" mat="carbon"/>
+  <xacro:vbox name="camera_bracket" xyz="${camera_mount_x - 0.015} 0 ${camera_mount_z - 0.002}" size="0.07 0.04 0.004" mat="carbon"/>
+
+  <!-- ==================== KOŁA ==================== -->
+  <!-- Link koła z siatką F1TENTH; oś obrotu = Y. Siatka ma oś Z i grubość 0..∓45mm,
+       stąd obrót o 90° wokół X i przesunięcie o pół szerokości, by wyśrodkować koło -->
+  <xacro:macro name="wheel_link" params="name side">
+    <xacro:property name="s" value="${1 if side == 'left' else -1}"/>
+    <link name="${name}">
+      <visual>
+        <origin xyz="0 ${-s*wheel_width/2} 0" rpy="${pi/2} 0 0"/>
+        <geometry><mesh filename="${mesh_dir}/${side}_wheel.stl"/></geometry>
+        <material name="tire_black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      </collision>
+      <xacro:cylinder_inertial m="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}">
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+      </xacro:cylinder_inertial>
+    </link>
+  </xacro:macro>
+
+  <!-- Tylne koło napędowe: obrót wokół Y -->
+  <xacro:macro name="rear_wheel" params="prefix y">
+    <xacro:wheel_link name="rear_${prefix}_wheel" side="${prefix}"/>
+    <joint name="rear_${prefix}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="rear_${prefix}_wheel"/>
+      <origin xyz="0 ${y} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- Przednie koło skrętne: zwrotnica (obrót wokół Z) + koło (obrót wokół Y) -->
+  <xacro:macro name="front_wheel" params="prefix y">
+    <link name="front_${prefix}_steering_hinge">
+      <visual>
+        <geometry><mesh filename="${mesh_dir}/hinge.stl"/></geometry>
+        <material name="chassis_grey"/>
+      </visual>
+      <xacro:box_inertial m="0.05" x="0.02" y="0.02" z="0.02">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      </xacro:box_inertial>
+    </link>
+    <joint name="front_${prefix}_steering_joint" type="revolute">
+      <parent link="base_link"/>
+      <child link="front_${prefix}_steering_hinge"/>
+      <origin xyz="${wheelbase} ${y} 0" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="${-steering_limit}" upper="${steering_limit}" effort="10" velocity="5"/>
+    </joint>
+
+    <xacro:wheel_link name="front_${prefix}_wheel" side="${prefix}"/>
+    <joint name="front_${prefix}_wheel_joint" type="continuous">
+      <parent link="front_${prefix}_steering_hinge"/>
+      <child link="front_${prefix}_wheel"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:rear_wheel prefix="left" y="${track_width/2}"/>
+  <xacro:rear_wheel prefix="right" y="${-track_width/2}"/>
+  <xacro:front_wheel prefix="left" y="${track_width/2}"/>
+  <xacro:front_wheel prefix="right" y="${-track_width/2}"/>
+
+  <!-- ==================== NAPĘD ACKERMANN + STANY PRZEGUBÓW ==================== -->
+  <gazebo>
+    <plugin filename="gz-sim-ackermann-steering-system" name="gz::sim::systems::AckermannSteering">
+      <left_joint>rear_left_wheel_joint</left_joint>
+      <right_joint>rear_right_wheel_joint</right_joint>
+      <left_steering_joint>front_left_steering_joint</left_steering_joint>
+      <right_steering_joint>front_right_steering_joint</right_steering_joint>
+      <kingpin_width>${track_width}</kingpin_width>
+      <steering_limit>${steering_limit}</steering_limit>
+      <wheel_base>${wheelbase}</wheel_base>
+      <wheel_separation>${track_width}</wheel_separation>
+      <wheel_radius>${wheel_radius}</wheel_radius>
+      <min_velocity>-3.0</min_velocity>
+      <max_velocity>3.0</max_velocity>
+      <min_acceleration>-5.0</min_acceleration>
+      <max_acceleration>5.0</max_acceleration>
+      <topic>/cmd_vel</topic>
+      <odom_topic>/odom</odom_topic>
+      <tf_topic>/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+      <odom_publish_frequency>30</odom_publish_frequency>
+    </plugin>
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+      <topic>/joint_states</topic>
+      <update_rate>30</update_rate> <!-- domyślnie co krok fizyki (1 kHz) -->
+    </plugin>
+  </gazebo>
+
+  <!-- ==================== CZUJNIK 1: RPLiDAR C1 ==================== -->
+  <link name="laser">
+    <collision>
+      <origin xyz="0 0 -0.01" rpy="0 0 0"/>
+      <geometry><cylinder radius="${lidar_r}" length="${lidar_h}"/></geometry>
+    </collision>
+    <xacro:cylinder_inertial m="${lidar_mass}" r="${lidar_r}" h="${lidar_h}">
+      <origin xyz="0 0 -0.01" rpy="0 0 0"/>
+    </xacro:cylinder_inertial>
+  </link>
+
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser"/>
+    <!-- Nad przednią osią, ponad dachem karoserii -->
+    <origin xyz="${wheelbase} 0 ${lidar_height}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Obudowa: podstawa, pasek okna, głowica -->
+  <xacro:vcyl name="laser_body" parent="laser" xyz="0 0 -0.0175" r="${lidar_r}" l="0.025" mat="chassis_grey"/>
+  <xacro:vcyl name="laser_window" parent="laser" xyz="0 0 -0.004" r="${lidar_r - 0.0003}" l="0.002" mat="lidar_cyan"/>
+  <xacro:vcyl name="laser_head" parent="laser" xyz="0 0 0.0025" r="0.025" l="0.015" mat="glass_black"/>
+
+  <!-- Wtyczka RPLiDAR C1 do Gazebo Sim -->
+  <gazebo reference="laser">
+    <sensor type="gpu_lidar" name="rplidar_c1">
+      <gz_frame_id>laser</gz_frame_id> <!-- frame_id w /scan zgodny z TF -->
+      <always_on>true</always_on>
+      <update_rate>10</update_rate> <!-- 10 Hz / 600 RPM -->
+      <topic>/scan</topic>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>720</samples>
+            <resolution>1</resolution>
+            <min_angle>${-pi}</min_angle> <!-- Pełne 360 stopni -->
+            <max_angle>${pi}</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.05</min>
+          <max>12.0</max>
+          <resolution>0.01</resolution>
+        </range>
+      </ray>
+    </sensor>
+  </gazebo>
+
+  <!-- ==================== CZUJNIK 2: INTEL REALSENSE D435 ==================== -->
+  <!-- Tworzy ramki camera_link, camera_color_optical_frame, camera_depth_frame itd. jak prawdziwy sterownik -->
+  <xacro:sensor_d435 parent="base_link" name="camera" use_nominal_extrinsics="true">
+    <origin xyz="${camera_mount_x} 0 ${camera_mount_z}" rpy="0 0 0"/>
+  </xacro:sensor_d435>
+
+  <!-- Kamera kolorowa: obraz w ramce optycznej (z do przodu), zgodnie z REP-103 -->
+  <gazebo reference="camera_color_frame">
+    <sensor type="camera" name="d435_color">
+      <gz_frame_id>camera_color_optical_frame</gz_frame_id>
+      <always_on>true</always_on>
+      <update_rate>15</update_rate>
+      <topic>/camera/color/image_raw</topic> <!-- camera_info: /camera/color/camera_info -->
+      <camera>
+        <horizontal_fov>1.2043</horizontal_fov> <!-- 69 stopni -->
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>10.0</far>
+        </clip>
+      </camera>
+    </sensor>
+  </gazebo>
+
+  <!-- Kamera głębi: chmura punktów z Gazebo jest w konwencji x do przodu, więc camera_depth_frame -->
+  <gazebo reference="camera_depth_frame">
+    <sensor type="depth_camera" name="d435_depth">
+      <gz_frame_id>camera_depth_frame</gz_frame_id>
+      <always_on>true</always_on>
+      <update_rate>15</update_rate>
+      <topic>/camera/depth</topic> <!-- chmura punktów: /camera/depth/points -->
+      <camera>
+        <horizontal_fov>1.5184</horizontal_fov> <!-- 87 stopni -->
+        <image>
+          <width>424</width> <!-- natywny tryb głębi D435 -->
+          <height>240</height>
+          <format>R_FLOAT32</format>
+        </image>
+        <clip>
+          <near>0.2</near>
+          <far>3.0</far>
+        </clip>
+      </camera>
+    </sensor>
+  </gazebo>
+
+</robot>
