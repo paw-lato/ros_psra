@@ -1,0 +1,99 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="linefollower_track">
+    <static>true</static>
+    <pose>0 0 0 0 0 0</pose>
+
+    <link name="track_link">
+      <!-- Track surface -->
+      <visual name="visual_track">
+        <geometry>
+          <mesh>
+            <uri>model://linefollower_track/meshes/track.obj</uri>
+            <scale>100 100 100</scale>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name="collision_track">
+        <geometry>
+          <mesh>
+            <uri>model://linefollower_track/meshes/track.obj</uri>
+            <scale>100 100 100</scale>
+          </mesh>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>1.2</mu>
+              <mu2>1.2</mu2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+
+      <!-- Follower Line -->
+      <visual name="visual_line">
+        <geometry>
+          <mesh>
+            <uri>model://linefollower_track/meshes/line.obj</uri>
+            <scale>100 100 100</scale>
+          </mesh>
+        </geometry>
+      </visual>
+
+      <!-- Barrier -->
+      <visual name="visual_barrier_1">
+        <geometry>
+          <mesh>
+            <uri>model://linefollower_track/meshes/barrier_1.obj</uri>
+            <scale>100 100 100</scale>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name="collision_barrier_1">
+        <geometry>
+          <mesh>
+            <uri>model://linefollower_track/meshes/barrier_1.obj</uri>
+            <scale>100 100 100</scale>
+          </mesh>
+        </geometry>
+      </collision>
+
+      <visual name="visual_barrier_2">
+        <geometry>
+          <mesh>
+            <uri>model://linefollower_track/meshes/barrier_2.obj</uri>
+            <scale>100 100 100</scale>
+          </mesh>
+        </geometry>
+      </visual>
+      <collision name="collision_barrier_2">
+        <geometry>
+          <mesh>
+            <uri>model://linefollower_track/meshes/barrier_2.obj</uri>
+            <scale>100 100 100</scale>
+          </mesh>
+        </geometry>
+      </collision>
+
+      <!-- Checkers -->
+      <visual name="visual_checkers_1">
+        <geometry>
+          <mesh>
+            <uri>model://linefollower_track/meshes/checkers_1.obj</uri>
+            <scale>100 100 100</scale>
+          </mesh>
+        </geometry>
+      </visual>
+
+      <visual name="visual_checkers_2">
+        <geometry>
+          <mesh>
+            <uri>model://linefollower_track/meshes/checkers_2.obj</uri>
+            <scale>100 100 100</scale>
+          </mesh>
+        </geometry>
+      </visual>
+    </link>
+  </model>
+</sdf>

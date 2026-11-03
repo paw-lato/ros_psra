@@ -18,9 +18,9 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='developer',
+    maintainer='Pawel Git',
     maintainer_email='pawellato03@gmail.com',
-    description='TODO: Package description',
+    description='Ostra jazda',
     license='Apache-2.0',
     extras_require={
         'test': [
