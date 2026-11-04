@@ -1,2 +1,15 @@
 Harpun leci ostro
+
 Niewiadów na minusie
+
+cd ~/ros2_ws
+rm -rf build/ install/ log/
+
+unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH
+source /opt/ros/jazzy/setup.bash
+
+colcon build --symlink-install
+
+source install/setup.bash
+
+ros2 launch roboracer_sim simulation.launch.py
