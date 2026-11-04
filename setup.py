@@ -15,6 +15,20 @@ setup(
         (os.path.join('share', package_name, 'config'), glob('config/*')),
         (os.path.join('share', package_name, 'worlds'), glob('worlds/*.sdf')),
         (os.path.join('share', package_name, 'urdf'), glob('urdf/*')),
+        (
+            os.path.join('share', package_name, 'worlds', 'linefollower_track'),
+            [
+                path for path in glob('worlds/linefollower_track/*')
+                if os.path.isfile(path)
+            ],
+        ),
+        (
+            os.path.join('share', package_name, 'worlds', 'linefollower_track', 'meshes'),
+            [
+                path for path in glob('worlds/linefollower_track/meshes/*')
+                if os.path.isfile(path)
+            ],
+        ),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -30,6 +44,7 @@ setup(
     entry_points={
         'console_scripts': [
           'control_pid = roboracer_sim.control_pid:main',
+          'roboracer_pid = roboracer_sim.roboracer_pid:main',
         ],
     },
 )
