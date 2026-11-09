@@ -268,9 +268,18 @@
       <child_frame_id>base_footprint</child_frame_id>
       <odom_publish_frequency>30</odom_publish_frequency>
     </plugin>
+    <!-- Ground-truth omijajac koła -->
+    <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>odom_gt</odom_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+      <odom_topic>odom_gt</odom_topic>
+      <tf_topic>tf_gt</tf_topic>
+      <dimensions>3</dimensions>
+      <odom_publish_frequency>50</odom_publish_frequency>
+    </plugin>
     <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
       <topic>/joint_states</topic>
-      <update_rate>30</update_rate> <!-- domyślnie co krok fizyki (1 kHz) -->
+      <update_rate>60</update_rate>
     </plugin>
   </gazebo>
 

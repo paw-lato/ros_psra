@@ -26,6 +26,13 @@
   gz_type_name: "gz.msgs.Pose_V"
   direction: GZ_TO_ROS
 
+# 3b. Odometria ground-truth z fizyki Gazebo (bez dryfu kół)
+- ros_topic_name: "/odom_gt"
+  gz_topic_name: "/odom_gt"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
 # 4. Kąty kół i zwrotnic (robot_state_publisher liczy z nich TF kół)
 - ros_topic_name: "/joint_states"
   gz_topic_name: "/joint_states"
