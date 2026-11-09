@@ -51,7 +51,7 @@
 
 
     <include>
-        <uri>./linefollower_track</uri>
+        <uri>model://linefollower_track</uri>
         <name>map_environment</name>
         <pose>0 0 0.01 0 0 0</pose>
     </include>

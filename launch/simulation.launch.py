@@ -17,7 +17,7 @@ def generate_launch_description():
     description_dir = get_package_share_directory('roboracer_description')
 
     world_file = os.path.join(pkg_dir, 'worlds', 'track.sdf')
-    worlds_dir = os.path.expanduser('~/ros2_ws/src/roboracer_sim/worlds')
+    worlds_dir = os.path.join(pkg_dir, 'worlds')
 
     bridge_config = os.path.join(pkg_dir, 'config', 'bridge_config.yaml')
     xacro_file = os.path.join(pkg_dir, 'urdf', 'roboracer.urdf.xacro')

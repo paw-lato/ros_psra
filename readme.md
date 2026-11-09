@@ -13,3 +13,4 @@ colcon build --symlink-install
 source install/setup.bash
 
 ros2 launch roboracer_sim simulation.launch.py
+ros2 run roboracer_sim roboracer_pid
