@@ -26,14 +26,12 @@ class Stanley(Node):
             get_package_share_directory('roboracer_sim'), 'worlds', 'linefollower_track'
         )
 
-        # Ścieżka z CSV: milimetry -> metry, ostatni punkt powtarza pierwszy
         self.waypoints = []
         with open(os.path.join(track_dir, 'line_gt.csv'), newline='') as f:
             for row in csv.DictReader(f):
                 self.waypoints.append((float(row['X']) / 1000.0, float(row['Y']) / 1000.0))
         self.waypoints = self.waypoints[:-1]
 
-        # Model toru do RViz: siatki .obj w skali 100x, jak w model.sdf
         self.track_markers = MarkerArray()
         meshes = [
             ('track.obj', (0.25, 0.25, 0.25, 1.0), 0.0),
@@ -70,15 +68,12 @@ class Stanley(Node):
         self.create_timer(1.0, lambda: self.track_pub.publish(self.track_markers))
 
     def odom_callback(self, msg):
-        # Stan pojazdu z /odom_gt (środek tylnej osi); auto jedzie po płaskim,
-        # więc kurs z kwaternionu to 2 * atan2(z, w)
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         theta = 2.0 * math.atan2(q.z, q.w)
         v = math.hypot(msg.twist.twist.linear.x, msg.twist.twist.linear.y)
 
-        # TF odom_gt -> odom, żeby LiDAR i robot (z odometrii kół) w RViz zgadzały się z torem
         if self.wheel_odom is not None:
             p = self.wheel_odom.pose.pose.position
             qw = self.wheel_odom.pose.pose.orientation
@@ -94,11 +89,9 @@ class Stanley(Node):
             t.transform.rotation.w = math.cos(th / 2.0)
             self.tf_broadcaster.sendTransform(t)
 
-        # Przednia oś: punkt odniesienia Stanleya
         fx = x + self.wheelbase * math.cos(theta)
         fy = y + self.wheelbase * math.sin(theta)
 
-        # Najbliższy punkt ścieżki i kurs ścieżki w tym punkcie
         i = min(
             range(len(self.waypoints)),
             key=lambda j: math.hypot(fx - self.waypoints[j][0], fy - self.waypoints[j][1]),
@@ -114,15 +107,12 @@ class Stanley(Node):
         target.point.y = py
         self.target_pub.publish(target)
 
-        # Błąd kursu psi i błąd poprzeczny e (e > 0: auto na prawo od ścieżki)
         psi = math.atan2(math.sin(theta_p - theta), math.cos(theta_p - theta))
         e = (fx - px) * math.sin(theta_p) - (fy - py) * math.cos(theta_p)
 
-        # Prawo Stanleya: delta = psi + atan(k * e / (ks + v)), z ograniczeniem skrętu
         delta = psi + math.atan2(self.k * e, self.ks + v)
         delta = max(-self.steering_limit, min(self.steering_limit, delta))
 
-        # Wtyczka Ackermanna przyjmuje prędkość kątową: omega = v * tan(delta) / L
         command = Twist()
         command.linear.x = self.speed
         command.angular.z = self.speed * math.tan(delta) / self.wheelbase
