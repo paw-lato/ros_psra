@@ -4,8 +4,9 @@ from pathlib import Path
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
+from nav_msgs.msg import Path as PathMsg
 from rclpy.node import Node
 
 
@@ -28,14 +29,33 @@ class HeadingPid(Node):
         self.previous_error = None
         self.previous_time = None
 
+        target_frame = 'odom_gt'
+
+        self.path_msg = PathMsg()
+        self.path_msg.header.frame_id = 'odom_gt'
+        for x, y in self.waypoints:
+            pose = PoseStamped()
+            pose.header.frame_id = 'odom_gt'
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.orientation.w = 1.0
+            self.path_msg.poses.append(pose)
+
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.path_pub = self.create_publisher(PathMsg, '/pid/path', 10)
         self.subscription = self.create_subscription(
             Odometry,
-            '/odom',
+            '/odom_gt',
             self.on_odom,
             10,
         )
+        
+        def send_path():
+            self.path_msg.header.stamp = self.get_clock().now().to_msg()
+            self.path_pub.publish(self.path_msg)
 
+        self.create_timer(1.0, send_path)
+    
     def load_waypoints(self):
         csv_path = (
             Path(get_package_share_directory('roboracer_sim'))

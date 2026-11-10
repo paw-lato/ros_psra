@@ -39,4 +39,8 @@ ros2 launch roboracer_sim experiment.launch.py controller:=stanley rtf:=0 rviz:=
 ros2 launch roboracer_sim experiment.launch.py controller:=pid rtf:=0.5
 
 # 5. Stanley + otwarte podwozie + bez RViz, RTF 2×
+
+
+
 ros2 launch roboracer_sim experiment.launch.py controller:=stanley body:=open rviz:=false rtf:=2.0
+#### ros2 run roboracer_sim pure_pursuit
