@@ -4,8 +4,9 @@ from pathlib import Path
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
+from nav_msgs.msg import Path as PathMsg
 from rclpy.node import Node
 
 
@@ -28,13 +29,25 @@ class HeadingPid(Node):
         self.previous_error = None
         self.previous_time = None
 
+        self.path_msg = PathMsg()
+        self.path_msg.header.frame_id = 'odom'
+        for x, y in self.waypoints:
+            pose = PoseStamped()
+            pose.header.frame_id = 'odom'
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.orientation.w = 1.0
+            self.path_msg.poses.append(pose)
+
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.path_pub = self.create_publisher(PathMsg, '/pid/path', 10)
         self.subscription = self.create_subscription(
             Odometry,
             '/odom',
             self.on_odom,
             10,
         )
+        self.create_timer(1.0, lambda: self.path_pub.publish(self.path_msg))
 
     def load_waypoints(self):
         csv_path = (
