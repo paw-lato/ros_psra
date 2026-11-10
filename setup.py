@@ -46,6 +46,7 @@ setup(
           'control_pid = roboracer_sim.control_pid:main',
           'roboracer_pid = roboracer_sim.roboracer_pid:main',
           'control_stanley = roboracer_sim.control_stanley:main',
+          'evaluate_run = roboracer_sim.evaluate_run:main',
         ],
     },
 )
