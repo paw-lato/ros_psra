@@ -80,6 +80,16 @@ def generate_launch_description():
         output='screen'
     )
 
+    # Transformacja łącząca odom z odom_gt
+    static_tf_odom_gt = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_tf_odom_gt',
+        arguments=['--frame-id', 'odom', '--child-frame-id', 'odom_gt'],
+        parameters=[{'use_sim_time': True}],
+        output='screen'
+    )
+
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -97,5 +107,6 @@ def generate_launch_description():
         gazebo,
         spawn_robot,
         bridge,
+        static_tf_odom_gt,
         rviz,
     ])
