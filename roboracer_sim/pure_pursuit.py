@@ -1,241 +1,386 @@
-import math
+
 import csv
+import math
 from pathlib import Path
-from ament_index_python.packages import get_package_share_directory
 
 import rclpy
 from rclpy.node import Node
-from nav_msgs.msg import Odometry
-from geometry_msgs.msg import TransformStamped, PoseStamped, Twist
-from nav_msgs.msg import Path as PathMsg
+from rclpy.qos import QoSProfile, DurabilityPolicy
+
+from ament_index_python.packages import get_package_share_directory
+
+from geometry_msgs.msg import Point, PoseStamped, TransformStamped, Twist
+from nav_msgs.msg import Odometry, Path as PathMsg
 from visualization_msgs.msg import Marker
 from std_srvs.srv import SetBool
+
 from tf2_ros import TransformBroadcaster
+from message_filters import Subscriber, ApproximateTimeSynchronizer
 
 
 class PurePursuit(Node):
-  def __init__(self):
-    super().__init__('pure_pursuit')
-    self.x = None
-    self.y = None
-    self.yaw = None
+    def __init__(self):
+        super().__init__('pure_pursuit')
 
-    self.L = 0.325
-    self.declare_parameter("Ld", 1.5)
-    self.declare_parameter("speed", 0.5)
+        # Parameters
+        self.declare_parameter('lookahead_min', 0.8)
+        self.declare_parameter('lookahead_max', 2.0)
+        self.declare_parameter('lookahead_time', 2.0)
+        self.declare_parameter('desired_speed', 0.8)
+        self.declare_parameter('max_lateral_accel', 0.4)
+        self.declare_parameter('max_angular_speed', 1.0)
+        self.declare_parameter('odom_timeout', 0.5)
 
-    self.waypoints, self.waypoints_len = self.load_waypoints()
-    self.waypoint_index = 0
-    self.t_prev = None
-    
-    self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-    self.path_pub = self.create_publisher(PathMsg, '/pid/path', 10)
-    self.lookahead_pub = self.create_publisher(Marker, '/pure_pursuit/lookahead', 10)
+        self.ld_min = self.get_parameter('lookahead_min').value
+        self.ld_max = self.get_parameter('lookahead_max').value
+        self.ld_time = self.get_parameter('lookahead_time').value
+        self.v_desired = self.get_parameter('desired_speed').value
+        self.ay_max = self.get_parameter('max_lateral_accel').value
+        self.omega_max = self.get_parameter('max_angular_speed').value
+        self.odom_timeout = self.get_parameter('odom_timeout').value
 
-    self.odom_sub = self.create_subscription(Odometry, '/odom_gt', self.odom_callback, 10)
-    
-    self.loop_timer = self.create_timer(0.1, self.control_loop)
-    self.create_timer(1.0, lambda: self.path_pub.publish(self.path_msg))
+        # Robot state
+        self.x = None
+        self.y = None
+        self.yaw = None
+        self.v = 0.0
+        self.last_odom_time = None
+        self.running = False
 
-    self.tf_broadcaster = TransformBroadcaster(self)
+        # Waypoints
+        self.waypoints = self.load_waypoints()
+        self.waypoint_index = None
 
-    self.path_msg = PathMsg()
-    self.path_msg.header.frame_id = 'odom_gt'
-    for x, y in self.waypoints:
-        pose = PoseStamped()
-        pose.header.frame_id = 'odom_gt'
-        pose.pose.position.x = x
-        pose.pose.position.y = y
-        pose.pose.orientation.w = 1.0
-        self.path_msg.poses.append(pose)
+        # Publishers
+        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.target_pub = self.create_publisher(Marker, '/pure_pursuit/lookahead', 10)
+        self.line_pub = self.create_publisher(Marker, '/pure_pursuit/target_line', 10)
 
-    self.running = False
-    self.control_service = self.create_service(SetBool, '/pure_pursuit/enable', self.enable_callback)
+        path_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.path_pub = self.create_publisher( PathMsg, '/pure_pursuit/path', path_qos)
 
-  def load_waypoints(self):
-    csv_path = (
-        Path(get_package_share_directory('roboracer_sim'))
-        / 'worlds' / 'linefollower_track' / 'line_gt.csv')
-    with csv_path.open(newline='', encoding='utf-8') as file:
-        rows = csv.DictReader(file)
-        waypoints = [(float(row['X']) / 1000.0, float(row['Y']) / 1000.0) for row in rows]
-    return waypoints, len(waypoints)
-  
-  def odom_callback(self, msg):
-    self.x = msg.pose.pose.position.x
-    self.y = msg.pose.pose.position.y
+        # Odometry
+        self.create_subscription(Odometry, '/odom_gt', self.odom_callback, 10)
 
-    q = msg.pose.pose.orientation
-    self.yaw = math.atan2(2.0*(q.w * q.z + q.x * q.y), 1.0 - 2.0*(q.y**2 + q.z**2))
+        # TF: odom_gt -> odom
+        self.tf_broadcaster = TransformBroadcaster(self)
 
-    t = TransformStamped()
+        self.odom_tf_sub = Subscriber(self, Odometry, '/odom')
+        self.gt_tf_sub = Subscriber(self, Odometry, '/odom_gt')
 
-    t.header.stamp = msg.header.stamp
-    t.header.frame_id = msg.header.frame_id
-    t.child_frame_id = msg.child_frame_id
+        self.tf_sync = ApproximateTimeSynchronizer(
+            [self.odom_tf_sub, self.gt_tf_sub],
+            queue_size=30,
+            slop=0.05)
+        self.tf_sync.registerCallback(self.publish_corrected_tf)
 
-    t.transform.translation.x = msg.pose.pose.position.x
-    t.transform.translation.y = msg.pose.pose.position.y
-    t.transform.translation.z = msg.pose.pose.position.z
+        # Start/stop service
+        self.create_service(SetBool, '/pure_pursuit/enable', self.enable_callback)
 
-    t.transform.rotation = msg.pose.pose.orientation
+        # Publish path
+        self.publish_path()
 
-    self.tf_broadcaster.sendTransform(t)
+        # Loop control - 10 Hz
+        self.create_timer(0.1, self.control_loop)
 
-  def publish_lookahead(self, point):
-    marker = Marker()
+    def load_waypoints(self):
+        csv_path = (
+            Path(get_package_share_directory('roboracer_sim'))
+            / 'worlds' / 'linefollower_track' / 'line_gt.csv'
+        )
 
-    marker.header.frame_id = 'odom_gt'
-    marker.header.stamp = self.get_clock().now().to_msg()
+        with csv_path.open(newline='', encoding='utf-8') as file:
+            rows = csv.DictReader(file)
+            return [
+                (float(row['X']) / 1000.0,
+                 float(row['Y']) / 1000.0)
+                for row in rows
+            ]
 
-    marker.ns = 'lookahead'
-    marker.id = 0
-    marker.type = Marker.SPHERE
-    marker.action = Marker.ADD
+    @staticmethod
+    def get_yaw(q):
+        return math.atan2(2.0*(q.w*q.z + q.x*q.y), 1.0 - 2.0*(q.y**2 + q.z**2))
 
-    marker.pose.position.x = point[0]
-    marker.pose.position.y = point[1]
-    marker.pose.position.z = 0.15
-    marker.pose.orientation.w = 1.0
+    def odom_callback(self, msg):
+        pose = msg.pose.pose
 
-    marker.scale.x = 0.25
-    marker.scale.y = 0.25
-    marker.scale.z = 0.25
+        self.x = pose.position.x
+        self.y = pose.position.y
+        self.yaw = self.get_yaw(pose.orientation)
+        self.v = msg.twist.twist.linear.x
 
-    # Kolor czerwony
-    marker.color.r = 1.0
-    marker.color.g = 0.0
-    marker.color.b = 0.0
-    marker.color.a = 1.0
+        self.last_odom_time = self.get_clock().now()
 
-    self.lookahead_pub.publish(marker)
+    def get_lookahead(self):
+        ld = self.ld_time * abs(self.v)
+        return max(self.ld_min, min(self.ld_max, ld))
 
-  def enable_callback(self, request, response):
-    self.running = request.data
+    def nearest_segment(self):
+        n = len(self.waypoints)
+        best_dist = float('inf')
+        best_index = 0
+        best_t = 0.0
 
-    if self.running:
-        self.get_logger().info("Pure Pursuit START")
-    else:
-        self.get_logger().info("Pure Pursuit STOP")
-        self.cmd_vel_pub.publish(Twist())
+        if self.waypoint_index is None:
+            indices = range(n)
+        else:
+            indices = [(self.waypoint_index + offset) % n for offset in range(-5, 30)]
 
-    response.success = True
-    response.message = "Started" if self.running else "Stopped"
+        for i in indices:
+            ax, ay = self.waypoints[i]
+            bx, by = self.waypoints[(i + 1) % n]
 
-    return response
+            dx = bx - ax
+            dy = by - ay
+            length_sq = dx * dx + dy * dy
 
-  def lookahead_point(self, p1, p2):
-    xr = self.x
-    yr = self.y
-    Ld = self.get_parameter('Ld').value
-
-    dx = p2[0] - p1[0]
-    dy = p2[1] - p1[1]
-
-    fx = p1[0] - xr
-    fy = p1[1] - yr
-
-    a = dx**2 + dy**2
-    b = 2 * (fx * dx + fy * dy)
-    c = fx**2 + fy**2 - Ld**2
-
-    if a == 0:
-        return None
-
-    delta = b**2 - 4*a*c
-
-    if delta < 0:
-        return None
-
-    t1 = (-b - math.sqrt(delta)) / (2*a)
-    t2 = (-b + math.sqrt(delta)) / (2*a)
-
-    valid_t = [t for t in (t1, t2) if 0 <= t <= 1]
-
-    if not valid_t:
-        return None
-
-    t = max(valid_t)
-
-    x = p1[0] + t*dx
-    y = p1[1] + t*dy
-    return (x, y), t
-
-  def control_loop(self):
-    if not self.running:
-        return
-    
-    if self.x is None or self.y is None or self.yaw is None:
-      return 
-
-    point = None
-    for i in range(self.waypoints_len):
-      index = (self.waypoint_index + i) % self.waypoints_len
-
-      p1 = self.waypoints[index]
-      p2 = self.waypoints[(index + 1) % self.waypoints_len]
-      result = self.lookahead_point(p1, p2)
-
-      if result is None:
-            continue
-      candidate, t = result
-
-      if index == self.waypoint_index and self.t_prev is not None:
-            if t < self.t_prev - 1e-6:
+            if length_sq < 1e-12:
                 continue
 
-      point = candidate
-      self.waypoint_index = index
-      self.t_prev = t
-      break
-    
-    if point is None:
-      self.get_logger().warn(
-          f"No Look Ahead Point! "
-          f"Robot: ({self.x:.2f}, {self.y:.2f}), "
-          f"Index: {self.waypoint_index}")
+            t = ((self.x - ax) * dx + (self.y - ay) * dy) / length_sq
+            t = max(0.0, min(1.0, t))
 
-      self.cmd_vel_pub.publish(Twist())
-      return
+            px = ax + t * dx
+            py = ay + t * dy
 
-    self.publish_lookahead(point)
+            dist = math.hypot(self.x - px, self.y - py)
 
-    alpha = math.atan2(point[1] - self.y, point[0] - self.x) - self.yaw
-    Ld = self.get_parameter("Ld").value
-    v_desired = self.get_parameter("speed").value
+            if dist < best_dist:
+                best_dist = dist
+                best_index = i
+                best_t = t
 
-    ay_max = 1.0
-    omega_max = 1.5
+        return best_index, best_t
 
-    kappa = 2.0 * math.sin(alpha) / Ld
+    def segment_intersections(self, p1, p2, ld):
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
 
-    v_curve = math.sqrt(ay_max / max(abs(kappa), 1e-6))
+        fx = p1[0] - self.x
+        fy = p1[1] - self.y
 
-    v_omega = omega_max / max(abs(kappa), 1e-6)
+        a = dx*dx + dy*dy
 
-    v = min(v_desired, v_curve, v_omega)
-    
-    omega = v * kappa
+        if a < 1e-12:
+            return []
 
-    msg = Twist()
-    msg.linear.x = v
-    msg.angular.z = omega
+        b = 2.0*(fx*dx + fy*dy)
+        c = fx*fx + fy*fy - ld*ld
 
-    self.cmd_vel_pub.publish(msg)
+        delta = b * b - 4.0 * a * c
+
+        if delta < 0.0:
+            return []
+
+        root = math.sqrt(delta)
+
+        t1 = (-b - root) / (2.0 * a)
+        t2 = (-b + root) / (2.0 * a)
+
+        return sorted(t for t in (t1, t2) if 0.0 <= t <= 1.0)
+
+    def find_target(self, ld):
+        n = len(self.waypoints)
+
+        start_index, start_t = self.nearest_segment()
+        self.waypoint_index = start_index
+
+        for offset in range(n):
+            i = (start_index + offset) % n
+
+            p1 = self.waypoints[i]
+            p2 = self.waypoints[(i + 1) % n]
+
+            intersections = self.segment_intersections(p1, p2, ld)
+
+            for t in intersections:
+                if offset == 0 and t < start_t:
+                    continue
+
+                x = p1[0] + t * (p2[0] - p1[0])
+                y = p1[1] + t * (p2[1] - p1[1])
+
+                return (x, y)
+
+        return None
+
+    def calculate_control(self, target):
+        dx = target[0] - self.x
+        dy = target[1] - self.y
+
+        local_y = -math.sin(self.yaw) * dx + math.cos(self.yaw) * dy
+
+        distance_sq = dx * dx + dy * dy
+
+        if distance_sq < 1e-9:
+            return 0.0, 0.0
+
+        kappa = 2.0 * local_y / distance_sq
+
+        v_curve = math.sqrt(self.ay_max / max(abs(kappa), 1e-6))
+
+        v_omega = self.omega_max / max(abs(kappa), 1e-6)
+
+        v = min(self.v_desired, v_curve, v_omega)
+        omega = v * kappa
+
+        return v, omega
+
+    def publish_cmd(self, v, omega):
+        msg = Twist()
+        msg.linear.x = v
+        msg.angular.z = omega
+        self.cmd_pub.publish(msg)
+
+    def publish_path(self):
+        msg = PathMsg()
+        msg.header.frame_id = 'odom_gt'
+        msg.header.stamp = self.get_clock().now().to_msg()
+
+        for x, y in self.waypoints:
+            pose = PoseStamped()
+            pose.header = msg.header
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.orientation.w = 1.0
+            msg.poses.append(pose)
+
+        msg.poses.append(msg.poses[0])
+        self.path_pub.publish(msg)
+
+    def make_marker(self, marker_id, marker_type):
+        marker = Marker()
+        marker.header.frame_id = 'odom_gt'
+        marker.header.stamp = self.get_clock().now().to_msg()
+
+        marker.ns = 'pure_pursuit'
+        marker.id = marker_id
+        marker.type = marker_type
+        marker.action = Marker.ADD
+
+        marker.pose.orientation.w = 1.0
+        marker.color.a = 1.0
+
+        return marker
+
+    def publish_debug(self, target):
+        marker = self.make_marker(0, Marker.SPHERE)
+
+        marker.pose.position.x = target[0]
+        marker.pose.position.y = target[1]
+        marker.pose.position.z = 0.15
+
+        marker.scale.x = 0.25
+        marker.scale.y = 0.25
+        marker.scale.z = 0.25
+
+        marker.color.r = 1.0
+
+        self.target_pub.publish(marker)
+
+        line = self.make_marker(1, Marker.LINE_STRIP)
+
+        line.scale.x = 0.035
+        line.color.g = 1.0
+
+        start = Point()
+        start.x = self.x
+        start.y = self.y
+        start.z = 0.1
+
+        end = Point()
+        end.x = target[0]
+        end.y = target[1]
+        end.z = 0.1
+
+        line.points = [start, end]
+
+        self.line_pub.publish(line)
+
+    def publish_corrected_tf(self, odom, gt):
+        if (odom.header.frame_id != 'odom' or gt.header.frame_id != 'odom_gt'
+            or odom.child_frame_id != 'base_footprint' or gt.child_frame_id != 'base_footprint'):
+            return
+
+        op = odom.pose.pose
+        gp = gt.pose.pose
+
+        angle = self.get_yaw(gp.orientation) - self.get_yaw(op.orientation)
+
+        c = math.cos(angle)
+        s = math.sin(angle)
+
+        x = gp.position.x - c * op.position.x + s * op.position.y
+        y = gp.position.y - s * op.position.x - c * op.position.y
+
+        tf = TransformStamped()
+        tf.header.stamp = gt.header.stamp
+        tf.header.frame_id = 'odom_gt'
+        tf.child_frame_id = 'odom'
+
+        tf.transform.translation.x = x
+        tf.transform.translation.y = y
+        tf.transform.translation.z = gp.position.z - op.position.z
+
+        tf.transform.rotation.z = math.sin(angle / 2.0)
+        tf.transform.rotation.w = math.cos(angle / 2.0)
+
+        self.tf_broadcaster.sendTransform(tf)
+
+    def enable_callback(self, request, response):
+        self.running = request.data
+
+        if not self.running:
+            self.publish_cmd(0.0, 0.0)
+
+        state = 'START' if self.running else 'STOP'
+        self.get_logger().info(f'Pure Pursuit {state}')
+
+        response.success = True
+        response.message = state
+
+        return response
+
+    def control_loop(self):
+        if not self.running:
+            return
+
+        if self.last_odom_time is None:
+            self.publish_cmd(0.0, 0.0)
+            return
+
+        odom_age = (self.get_clock().now() - self.last_odom_time).nanoseconds / 1e9
+
+        if odom_age > self.odom_timeout:
+            self.publish_cmd(0.0, 0.0)
+            return
+
+        ld = self.get_lookahead()
+        target = self.find_target(ld)
+
+        if target is None:
+            self.publish_cmd(0.0, 0.0)
+            return
+
+        v, omega = self.calculate_control(target)
+
+        self.publish_cmd(v, omega)
+        self.publish_debug(target)
 
 
 def main(args=None):
     rclpy.init(args=args)
-
-    node = PurePursuit()
+    node = None
 
     try:
+        node = PurePursuit()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.cmd_vel_pub.publish(Twist())
-        node.destroy_node()
+        if node is not None:
+            node.publish_cmd(0.0, 0.0)
+            node.destroy_node()
         rclpy.shutdown()
 
 
