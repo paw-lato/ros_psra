@@ -25,6 +25,11 @@ def generate_launch_description():
         choices=['pid', 'stanley'],
     )
     # Przekazujemy dalej do simulation.launch.py
+    track_arg = DeclareLaunchArgument(
+        'track',
+        default_value='linefollower_track_easy',
+        description='Tor: linefollower_track, linefollower_track_easy',
+    )
     rviz_arg = DeclareLaunchArgument(
         'rviz',
         default_value='true',
@@ -55,6 +60,7 @@ def generate_launch_description():
             os.path.join(pkg_dir, 'launch', 'simulation.launch.py')
         ),
         launch_arguments={
+            'track': LaunchConfiguration('track'),
             'rviz': LaunchConfiguration('rviz'),
             'gui': LaunchConfiguration('gui'),
             'body': LaunchConfiguration('body'),
@@ -110,6 +116,7 @@ def generate_launch_description():
     ########### LISTA AKCJI LAUNCH #########
     return LaunchDescription([
         controller_arg,
+        track_arg,
         rviz_arg,
         gui_arg,
         body_arg,

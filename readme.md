@@ -1,6 +1,10 @@
+-- Haiku
+
 Harpun leci ostro
 
 Niewiadów na minusie
+
+Dron na złomowisku
 
 --- Command hell ---
 
@@ -44,3 +48,33 @@ ros2 launch roboracer_sim experiment.launch.py controller:=pid rtf:=0.5
 
 ros2 launch roboracer_sim experiment.launch.py controller:=stanley body:=open rviz:=false rtf:=2.0
 #### ros2 run roboracer_sim pure_pursuit
+
+
+## Wybór toru (`track:=...`)
+
+ros2 launch roboracer_sim simulation.launch.py track:=linefollower_track
+
+Tory:
+- `linefollower_track_easy` (domyślny)
+- `linefollower_track`
+
+Dodanie autmatycznego pobierania waypointów
+
+W `__init__` zapytnaie o ścieżkę do `/track/get_path` -> waypoints -> pełna lista waypointów w metrach:
+
+((0.0, 0.0), (0.0779806, 0.0), (0.1559611, 0.0), ...)
+
+```python
+from nav_msgs.srv import GetPlan
+
+# w __init__:
+client = self.create_client(GetPlan, '/track/get_path')
+while rclpy.ok() and not client.wait_for_service(timeout_sec=1.0):
+    self.get_logger().info('Czekam na serwis /track/get_path...')
+
+future = client.call_async(GetPlan.Request())
+rclpy.spin_until_future_complete(self, future)
+self.waypoints = tuple(
+    (p.pose.position.x, p.pose.position.y) for p in future.result().plan.poses
+)
+```
