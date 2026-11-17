@@ -50,8 +50,8 @@ ros2 launch roboracer_sim experiment.launch.py controller:=stanley body:=open rv
 ros2 launch roboracer_sim simulation.launch.py track:=linefollower_track
 
 Tory:
-- `linefollower_track_easy` (domyślny)
-- `linefollower_track`
+- `linefollower_track_easy` 
+- `linefollower_track` (domyślny)
 
 Dodanie autmatycznego pobierania waypointów
 
