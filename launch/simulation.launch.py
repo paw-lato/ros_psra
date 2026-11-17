@@ -39,7 +39,7 @@ def generate_launch_description():
     # Nazwa katalogu toru w worlds
     track_arg = DeclareLaunchArgument(
         'track',
-        default_value='linefollower_track_easy',
+        default_value='linefollower_track',
         description='Tor: linefollower_track, linefollower_track_easy',
     )
     body_arg = DeclareLaunchArgument(
