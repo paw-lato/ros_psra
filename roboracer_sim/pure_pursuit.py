@@ -1,16 +1,13 @@
 
-import csv
 import math
-from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy
 
-from ament_index_python.packages import get_package_share_directory
-
 from geometry_msgs.msg import Point, PoseStamped, TransformStamped, Twist
 from nav_msgs.msg import Odometry, Path as PathMsg
+from nav_msgs.srv import GetPlan
 from visualization_msgs.msg import Marker
 from std_srvs.srv import SetBool
 
@@ -30,6 +27,7 @@ class PurePursuit(Node):
         self.declare_parameter('max_lateral_accel', 0.4)
         self.declare_parameter('max_angular_speed', 1.0)
         self.declare_parameter('odom_timeout', 0.5)
+        self.declare_parameter('enabled', False)
 
         self.ld_min = self.get_parameter('lookahead_min').value
         self.ld_max = self.get_parameter('lookahead_max').value
@@ -45,10 +43,12 @@ class PurePursuit(Node):
         self.yaw = None
         self.v = 0.0
         self.last_odom_time = None
-        self.running = False
+        self.running = bool(self.get_parameter('enabled').value)
 
-        # Waypoints
+        # Waypoints z track_viz (ten sam tor co w launchu)
         self.waypoints = self.load_waypoints()
+        if not self.waypoints:
+            raise RuntimeError('Serwis /track/get_path nie zwrócił waypointów.')
         self.waypoint_index = None
 
         # Publishers
@@ -57,7 +57,7 @@ class PurePursuit(Node):
         self.line_pub = self.create_publisher(Marker, '/pure_pursuit/target_line', 10)
 
         path_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self.path_pub = self.create_publisher( PathMsg, '/pure_pursuit/path', path_qos)
+        self.path_pub = self.create_publisher(PathMsg, '/pure_pursuit/path', path_qos)
 
         # Odometry
         self.create_subscription(Odometry, '/odom_gt', self.odom_callback, 10)
@@ -83,19 +83,23 @@ class PurePursuit(Node):
         # Loop control - 10 Hz
         self.create_timer(0.1, self.control_loop)
 
-    def load_waypoints(self):
-        csv_path = (
-            Path(get_package_share_directory('roboracer_sim'))
-            / 'worlds' / 'linefollower_track' / 'line_gt.csv'
-        )
+        if self.running:
+            self.get_logger().info('Pure Pursuit START (enabled=true)')
 
-        with csv_path.open(newline='', encoding='utf-8') as file:
-            rows = csv.DictReader(file)
-            return [
-                (float(row['X']) / 1000.0,
-                 float(row['Y']) / 1000.0)
-                for row in rows
-            ]
+    def load_waypoints(self):
+        client = self.create_client(GetPlan, '/track/get_path')
+        while rclpy.ok() and not client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Czekam na serwis /track/get_path...')
+
+        future = client.call_async(GetPlan.Request())
+        rclpy.spin_until_future_complete(self, future)
+        result = future.result()
+        if result is None:
+            raise RuntimeError('Nie udało się pobrać ścieżki z /track/get_path')
+
+        return tuple(
+            (p.pose.position.x, p.pose.position.y) for p in result.plan.poses
+        )
 
     @staticmethod
     def get_yaw(q):

@@ -55,20 +55,33 @@ def distance_point_to_segment(px, py, ax, ay, bx, by):
     return math.hypot(px - cx, py - cy), t
 
 
-def lateral_error_and_progress(px, py, points, segment_lengths):
-    # Najmniejsza odległość do ścieżki + odległość wzdłuż toru do rzutu.
-    best_dist = 1e9
-    best_s = 0.0
+def lateral_error_and_progress(px, py, points, segment_lengths, prev_s=None, total_length=None):
+    # CTE = min odległość; postęp s wybierany ciągle względem prev_s.
+    # Na zamkniętej pętli start≈meta: s=0 i s=L to ten sam punkt — NIE używamy
+    # zawinięcia (bo |0−L|_wrap=0), tylko abs(s−prev_s) na odcinku [0, L].
+    candidates = []
     s_before = 0.0
-
     for i in range(len(points) - 1):
         ax, ay = points[i]
         bx, by = points[i + 1]
         dist, t = distance_point_to_segment(px, py, ax, ay, bx, by)
-        if dist < best_dist:
-            best_dist = dist
-            best_s = s_before + t * segment_lengths[i]
+        candidates.append((dist, s_before + t * segment_lengths[i]))
         s_before += segment_lengths[i]
+
+    if not candidates:
+        return 0.0, 0.0
+
+    best_dist = min(c[0] for c in candidates)
+    # Kandydaci prawie tak samo blisko (5 cm) — rozstrzygamy ciągłością.
+    near = [c for c in candidates if c[0] <= best_dist + 0.05]
+    if prev_s is None:
+        _, best_s = min(near, key=lambda c: (c[0], c[1]))
+    else:
+        # Mały skok w s bez modulo; przy remisie bliższy CTE, potem mniejszy s.
+        _, best_s = min(
+            near,
+            key=lambda c: (abs(c[1] - prev_s), c[0], c[1]),
+        )
 
     return best_dist, best_s
 
@@ -95,6 +108,7 @@ class EvaluateRun(Node):
 
         ########### PARAMETRY #########
         self.declare_parameter('controller_name', 'unknown')
+        self.declare_parameter('track', 'linefollower_track')
         self.declare_parameter('odom_topic', '/odom_gt')
         self.declare_parameter('report_period', 10.0)  # sekundy między raportami
         self.declare_parameter('lap_finish_radius', 1.5)  # [m] powrót do startu
@@ -102,21 +116,25 @@ class EvaluateRun(Node):
         self.declare_parameter('start_move_distance', 1.0)  # [m] od startu = „wystartował”
 
         self.controller_name = self.get_parameter('controller_name').value
+        track = str(self.get_parameter('track').value)
         report_period = float(self.get_parameter('report_period').value)
         self.lap_finish_radius = float(self.get_parameter('lap_finish_radius').value)
         self.min_progress_ratio = float(self.get_parameter('min_progress_ratio').value)
         self.start_move_distance = float(self.get_parameter('start_move_distance').value)
 
-        ########### ŚCIEŻKA GT #########
+        ########### ŚCIEŻKA GT (CSV wybranego toru) #########
         csv_path = (
             Path(get_package_share_directory('roboracer_sim'))
             / 'worlds'
-            / 'linefollower_track'
+            / track
             / 'line_gt.csv'
         )
+        if not csv_path.is_file():
+            raise RuntimeError(f'Brak GT dla toru "{track}": {csv_path}')
+
         self.path = load_gt_path(csv_path)
         if len(self.path) < 2:
-            raise RuntimeError('Za mało punktów w line_gt.csv')
+            raise RuntimeError(f'Za mało punktów w {csv_path}')
 
         # Długości kolejnych odcinków (raz na start).
         self.segment_lengths = []
@@ -136,7 +154,9 @@ class EvaluateRun(Node):
         self.prev_y = None
 
         self.max_progress_s = 0.0  # najdalej wzdłuż toru
+        self.prev_progress_s = 0.0  # ostatni rzut (ciągłość na pętli)
         self.started = False
+        self.left_start_zone = False  # trzeba opuścić strefę mety zanim można finiszować
         self.finished = False
 
         self.t0 = None  # czas startu pomiaru (po ruszeniu)
@@ -149,7 +169,7 @@ class EvaluateRun(Node):
 
         self.get_logger().info(
             f'Ewaluacja start ({self.controller_name}): '
-            f'GT={csv_path.name}, długość toru={self.total_path_length:.1f} m, '
+            f'tor={track}, GT={csv_path}, długość={self.total_path_length:.1f} m, '
             f'temat={odom_topic}, raport co {report_period:.0f} s, max 1 okrążenie'
         )
 
@@ -177,10 +197,13 @@ class EvaluateRun(Node):
         self.prev_x = x
         self.prev_y = y
 
-        # Błąd poprzeczny i postęp wzdłuż GT.
+        # Błąd poprzeczny i postęp wzdłuż GT (ciągły — bez skoku na koniec pętli).
         e_lat, s = lateral_error_and_progress(
-            x, y, self.path, self.segment_lengths
+            x, y, self.path, self.segment_lengths,
+            prev_s=self.prev_progress_s,
+            total_length=self.total_path_length,
         )
+        self.prev_progress_s = s
         if s > self.max_progress_s:
             self.max_progress_s = s
 
@@ -195,16 +218,25 @@ class EvaluateRun(Node):
             else:
                 return
 
+        # Meta wolna dopiero po opuszczeniu strefy startu (start == meta na pętli).
+        if not self.left_start_zone:
+            if dist_to_start > self.lap_finish_radius:
+                self.left_start_zone = True
+                self.get_logger().info('Opuszczono strefę startu — liczę okrążenie.')
+
         self.lateral_errors.append(e_lat)
         self.speeds.append(speed)
         self.sample_count += 1
 
-        # Koniec okrążenia: dużo postępu wzdłuż toru + powrót blisko startu.
+        # Koniec okrążenia: był poza strefą + ≥90% toru + powrót do startu.
         progress_ok = self.max_progress_s >= (
             self.min_progress_ratio * self.total_path_length
         )
+        distance_ok = self.distance_traveled >= (
+            0.5 * self.total_path_length
+        )
         near_start = dist_to_start <= self.lap_finish_radius
-        if progress_ok and near_start:
+        if self.left_start_zone and progress_ok and distance_ok and near_start:
             self.finished = True
             self.get_logger().info('Wykryto koniec okrążenia.')
             self.print_final_report()

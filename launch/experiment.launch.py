@@ -17,19 +17,24 @@ def generate_launch_description():
     pkg_dir = get_package_share_directory('roboracer_sim')
 
     ########### ARGUMENTY #########
-    # controller: pid | stanley
+    # controller: pid | stanley | pure_pursuit
     controller_arg = DeclareLaunchArgument(
         'controller',
         default_value='pid',
-        description='Regulator: pid albo stanley',
-        choices=['pid', 'stanley'],
+        description='Regulator: pid, stanley albo pure_pursuit',
+        choices=['pid', 'stanley', 'pure_pursuit'],
     )
-    # Przekazujemy dalej do simulation.launch.py
-    track_arg = DeclareLaunchArgument(
-        'track',
-        default_value='linefollower_track_easy',
-        description='Tor: linefollower_track, linefollower_track_easy',
+    # easy=true → linefollower_track_easy, easy=false → linefollower_track
+    easy_arg = DeclareLaunchArgument(
+        'easy',
+        default_value='true',
+        description='true = linefollower_track_easy, false = linefollower_track',
     )
+    track = PythonExpression([
+        "'linefollower_track_easy' if '",
+        LaunchConfiguration('easy'),
+        "' == 'true' else 'linefollower_track'",
+    ])
     rviz_arg = DeclareLaunchArgument(
         'rviz',
         default_value='true',
@@ -60,7 +65,7 @@ def generate_launch_description():
             os.path.join(pkg_dir, 'launch', 'simulation.launch.py')
         ),
         launch_arguments={
-            'track': LaunchConfiguration('track'),
+            'track': track,
             'rviz': LaunchConfiguration('rviz'),
             'gui': LaunchConfiguration('gui'),
             'body': LaunchConfiguration('body'),
@@ -98,8 +103,26 @@ def generate_launch_description():
         ),
     )
 
+    ########### REGULATOR PURE PURSUIT #########
+    # Uruchamiany tylko gdy controller:=pure_pursuit; enabled=true startuje od razu
+    pure_pursuit_node = Node(
+        package='roboracer_sim',
+        executable='pure_pursuit',
+        name='pure_pursuit',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'enabled': True,
+        }],
+        condition=IfCondition(
+            PythonExpression([
+                "'", LaunchConfiguration('controller'), "' == 'pure_pursuit'"
+            ])
+        ),
+    )
+
     ########### EWALUACJA #########
-    # Subskrybuje /odom_gt, porównuje z line_gt.csv, raport co 10 s, max 1 okrążenie.
+    # Subskrybuje /odom_gt, porównuje z line_gt.csv wybranego toru, raport co 10 s.
     evaluate_node = Node(
         package='roboracer_sim',
         executable='evaluate_run',
@@ -108,6 +131,7 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': True,
             'controller_name': LaunchConfiguration('controller'),
+            'track': track,
             'odom_topic': '/odom_gt',
             'report_period': 10.0,
         }],
@@ -116,7 +140,7 @@ def generate_launch_description():
     ########### LISTA AKCJI LAUNCH #########
     return LaunchDescription([
         controller_arg,
-        track_arg,
+        easy_arg,
         rviz_arg,
         gui_arg,
         body_arg,
@@ -124,5 +148,6 @@ def generate_launch_description():
         simulation,
         pid_node,
         stanley_node,
+        pure_pursuit_node,
         evaluate_node,
     ])

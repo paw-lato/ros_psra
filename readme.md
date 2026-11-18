@@ -41,17 +41,29 @@ ros2 launch roboracer_sim experiment.launch.py controller:=stanley rtf:=0 rviz:=
 ros2 launch roboracer_sim experiment.launch.py controller:=pid rtf:=0.5
 
 ### 5. Stanley + otwarte podwozie + bez RViz, RTF 2×
-
 ros2 launch roboracer_sim experiment.launch.py controller:=stanley body:=open rviz:=false rtf:=2.0
+
+### 6. Pure Pursuit na torze łatwym (domyślnie easy:=true)
+ros2 launch roboracer_sim experiment.launch.py controller:=pure_pursuit
+
+### 7. Pure Pursuit na torze trudnym
+ros2 launch roboracer_sim experiment.launch.py controller:=pure_pursuit easy:=false
 
 
 ## --- Wybór toru ---
 
+Eksperyment (`easy`):
+- `easy:=true` → `linefollower_track_easy` (domyślne w experiment)
+- `easy:=false` → `linefollower_track`
+
+Symulacja bezpośrednio (`track`):
+```
 ros2 launch roboracer_sim simulation.launch.py track:=linefollower_track
+```
 
 Tory:
-- `linefollower_track_easy` 
-- `linefollower_track` (domyślny)
+- `linefollower_track_easy`
+- `linefollower_track` (domyślny w simulation)
 
 Dodanie autmatycznego pobierania waypointów
 

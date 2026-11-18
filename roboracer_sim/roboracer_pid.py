@@ -1,12 +1,10 @@
-import csv
 import math
-from pathlib import Path
 
 import rclpy
-from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path as PathMsg
+from nav_msgs.srv import GetPlan
 from rclpy.node import Node
 
 
@@ -22,14 +20,12 @@ class HeadingPid(Node):
 
         self.waypoints = self.load_waypoints()
         if not self.waypoints:
-            raise RuntimeError('Plik CSV nie zawiera waypointów.')
+            raise RuntimeError('Serwis /track/get_path nie zwrócił waypointów.')
 
         self.waypoint_index = 0
         self.integral = 0.0
         self.previous_error = None
         self.previous_time = None
-
-        target_frame = 'odom_gt'
 
         self.path_msg = PathMsg()
         self.path_msg.header.frame_id = 'odom_gt'
@@ -49,28 +45,28 @@ class HeadingPid(Node):
             self.on_odom,
             10,
         )
-        
+
         def send_path():
             self.path_msg.header.stamp = self.get_clock().now().to_msg()
             self.path_pub.publish(self.path_msg)
 
         self.create_timer(1.0, send_path)
-    
-    def load_waypoints(self):
-        csv_path = (
-            Path(get_package_share_directory('roboracer_sim'))
-            / 'worlds'
-            / 'linefollower_track'
-            / 'line_gt.csv'
-        )
 
-        with csv_path.open(newline='', encoding='utf-8-sig') as file:
-            rows = csv.DictReader(file)
-            # W CSV współrzędne są w mm; dzielimy przez 1000, aby uzyskać m.
-            return [
-                (float(row['X']) / 1000.0, float(row['Y']) / 1000.0)
-                for row in rows
-            ]
+    def load_waypoints(self):
+        # Waypointy z track_viz — ten sam tor co w launchu (easy / track).
+        client = self.create_client(GetPlan, '/track/get_path')
+        while rclpy.ok() and not client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Czekam na serwis /track/get_path...')
+
+        future = client.call_async(GetPlan.Request())
+        rclpy.spin_until_future_complete(self, future)
+        result = future.result()
+        if result is None:
+            raise RuntimeError('Nie udało się pobrać ścieżki z /track/get_path')
+
+        return tuple(
+            (p.pose.position.x, p.pose.position.y) for p in result.plan.poses
+        )
 
     @staticmethod
     def wrap_angle(angle):
