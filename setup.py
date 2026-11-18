@@ -48,6 +48,7 @@ setup(
           'control_stanley = roboracer_sim.control_stanley:main',
           'evaluate_run = roboracer_sim.evaluate_run:main',
           'pure_pursuit = roboracer_sim.pure_pursuit:main',
+          'line_perception = roboracer_sim.line_perception:main',
         ],
     },
 )
