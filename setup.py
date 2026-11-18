@@ -27,7 +27,6 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*')),
-        (os.path.join('share', package_name, 'urdf'), glob('urdf/*')),
         *package_files('worlds'),
     ],
     install_requires=['setuptools'],

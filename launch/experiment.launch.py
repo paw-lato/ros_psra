@@ -51,6 +51,12 @@ def generate_launch_description():
         choices=['shell', 'open'],
         description='Wygląd nadwozia',
     )
+    model_arg = DeclareLaunchArgument(
+        'model',
+        default_value='gym',
+        choices=['classic', 'gym'],
+        description='Wariant modelu: classic (STL) albo gym (GLB)',
+    )
     # Przekazywane do simulation.launch.py → gz service set_physics
     rtf_arg = DeclareLaunchArgument(
         'rtf',
@@ -69,6 +75,7 @@ def generate_launch_description():
             'rviz': LaunchConfiguration('rviz'),
             'gui': LaunchConfiguration('gui'),
             'body': LaunchConfiguration('body'),
+            'model': LaunchConfiguration('model'),
             'rtf': LaunchConfiguration('rtf'),
         }.items(),
     )
@@ -144,6 +151,7 @@ def generate_launch_description():
         rviz_arg,
         gui_arg,
         body_arg,
+        model_arg,
         rtf_arg,
         simulation,
         pid_node,
