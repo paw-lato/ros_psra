@@ -13,7 +13,12 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import (
+    Command,
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -27,7 +32,6 @@ def generate_launch_description():
     worlds_dir = os.path.join(pkg_dir, 'worlds')
 
     bridge_config = os.path.join(pkg_dir, 'config', 'bridge_config.yaml')
-    xacro_file = os.path.join(pkg_dir, 'urdf', 'roboracer.urdf.xacro')
     rviz_config = os.path.join(description_dir, 'rviz', 'roboracer.rviz')
 
     gz_resource_path = AppendEnvironmentVariable(
@@ -47,6 +51,13 @@ def generate_launch_description():
         default_value='shell',
         choices=['shell', 'open']
     )
+    # classic = STL f1tenth, gym = GLB jak f1tenth_gym_ros (oba z /odom + /odom_gt)
+    model_arg = DeclareLaunchArgument(
+        'model',
+        default_value='gym',
+        choices=['classic', 'gym'],
+        description='Wariant modelu z roboracer_description: classic albo gym',
+    )
     rviz_arg = DeclareLaunchArgument(
         'rviz',
         default_value='true',
@@ -65,6 +76,16 @@ def generate_launch_description():
         description='Gazebo real_time_factor (1=realtime, >1 szybciej, 0=max)',
     )
 
+    xacro_file = PathJoinSubstitution([
+        description_dir, 'urdf',
+        [
+            'roboracer',
+            PythonExpression([
+                "'' if '", LaunchConfiguration('model'), "' == 'classic' else '_gym'"
+            ]),
+            '.urdf.xacro',
+        ],
+    ])
     robot_description = ParameterValue(
         Command(['xacro ', xacro_file, ' body:=', LaunchConfiguration('body')]),
         value_type=str
@@ -177,6 +198,7 @@ def generate_launch_description():
         gz_resource_path,
         track_arg,
         body_arg,
+        model_arg,
         rviz_arg,
         gui_arg,
         rtf_arg,
