@@ -49,6 +49,12 @@ ros2 launch roboracer_sim experiment.launch.py controller:=pure_pursuit
 ### 7. Pure Pursuit na torze trudnym
 ros2 launch roboracer_sim experiment.launch.py controller:=pure_pursuit easy:=false
 
+### 8. NEW - PERCEPCJA Z KAMERY
+ros2 run roboracer_sim line_perception
+PID z kamerą:
+ros2 run roboracer_sim roboracer_pid --ros-args -p use_camera:=true
+PID z csv:
+ros2 run roboracer_sim roboracer_pid
 
 ## --- Wybór toru ---
 
