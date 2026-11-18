@@ -13,7 +13,7 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
 
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -36,6 +36,12 @@ def generate_launch_description():
     )
 
     ########### ARGUMENTY #########
+    # Nazwa katalogu toru w worlds
+    track_arg = DeclareLaunchArgument(
+        'track',
+        default_value='linefollower_track',
+        description='Tor: linefollower_track, linefollower_track_easy',
+    )
     body_arg = DeclareLaunchArgument(
         'body',
         default_value='shell',
@@ -107,6 +113,18 @@ def generate_launch_description():
         output='screen'
     )
 
+    ########### TOR (wybierany argumentem track) #########
+    spawn_track = Node(
+        package='ros_gz_sim',
+        executable='create',
+        arguments=[
+            '-file', PathJoinSubstitution([worlds_dir, LaunchConfiguration('track'), 'model.sdf']),
+            '-name', 'map_environment',
+            '-z', '0.01'
+        ],
+        output='screen'
+    )
+
     bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -114,13 +132,11 @@ def generate_launch_description():
         output='screen'
     )
 
-    # Transformacja łącząca odom z odom_gt
-    static_tf_odom_gt = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='static_tf_odom_gt',
-        arguments=['--frame-id', 'odom', '--child-frame-id', 'odom_gt'],
-        parameters=[{'use_sim_time': True}],
+    # Tor w RViz + dynamiczna transformacja odom_gt -> odom (korekta dryfu odometrii kół)
+    track_viz = Node(
+        package='roboracer_sim',
+        executable='track_viz',
+        parameters=[{'use_sim_time': True, 'track': LaunchConfiguration('track')}],
         output='screen'
     )
 
@@ -159,6 +175,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         gz_resource_path,
+        track_arg,
         body_arg,
         rviz_arg,
         gui_arg,
@@ -166,9 +183,10 @@ def generate_launch_description():
         robot_state_publisher,
         gazebo_gui,
         gazebo_headless,
+        spawn_track,
         spawn_robot,
         bridge,
-        static_tf_odom_gt,
+        track_viz,
         rviz,
         set_rtf,
     ])
