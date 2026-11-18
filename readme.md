@@ -22,6 +22,7 @@ ros2 launch roboracer_sim simulation.launch.py
 
 #### ros2 run roboracer_sim roboracer_pid
 #### ros2 run roboracer_sim control_stanley
+#### ros2 run roboracer_sim pure_pursuit + ros2 service call /pure_pursuit/enable std_srvs/srv/SetBool "{data: true}"
 
 ## --- Bandycka jazda w pigułce: ---
 

@@ -3,16 +3,12 @@ import math
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, DurabilityPolicy
 
-from geometry_msgs.msg import Point, PoseStamped, TransformStamped, Twist
-from nav_msgs.msg import Odometry, Path as PathMsg
+from geometry_msgs.msg import Point, Twist
+from nav_msgs.msg import Odometry
 from nav_msgs.srv import GetPlan
 from visualization_msgs.msg import Marker
 from std_srvs.srv import SetBool
-
-from tf2_ros import TransformBroadcaster
-from message_filters import Subscriber, ApproximateTimeSynchronizer
 
 
 class PurePursuit(Node):
@@ -20,18 +16,16 @@ class PurePursuit(Node):
         super().__init__('pure_pursuit')
 
         # Parameters
-        self.declare_parameter('lookahead_min', 0.8)
-        self.declare_parameter('lookahead_max', 2.0)
-        self.declare_parameter('lookahead_time', 2.0)
-        self.declare_parameter('desired_speed', 0.8)
+        self.declare_parameter('lookahead_min', 1.2)
+        self.declare_parameter('lookahead_max', 3.8)
+        self.declare_parameter('desired_speed', 1.2)
         self.declare_parameter('max_lateral_accel', 0.4)
-        self.declare_parameter('max_angular_speed', 1.0)
+        self.declare_parameter('max_angular_speed', 1.2)
         self.declare_parameter('odom_timeout', 0.5)
         self.declare_parameter('enabled', False)
 
         self.ld_min = self.get_parameter('lookahead_min').value
         self.ld_max = self.get_parameter('lookahead_max').value
-        self.ld_time = self.get_parameter('lookahead_time').value
         self.v_desired = self.get_parameter('desired_speed').value
         self.ay_max = self.get_parameter('max_lateral_accel').value
         self.omega_max = self.get_parameter('max_angular_speed').value
@@ -56,29 +50,11 @@ class PurePursuit(Node):
         self.target_pub = self.create_publisher(Marker, '/pure_pursuit/lookahead', 10)
         self.line_pub = self.create_publisher(Marker, '/pure_pursuit/target_line', 10)
 
-        path_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self.path_pub = self.create_publisher(PathMsg, '/pure_pursuit/path', path_qos)
-
         # Odometry
         self.create_subscription(Odometry, '/odom_gt', self.odom_callback, 10)
 
-        # TF: odom_gt -> odom
-        self.tf_broadcaster = TransformBroadcaster(self)
-
-        self.odom_tf_sub = Subscriber(self, Odometry, '/odom')
-        self.gt_tf_sub = Subscriber(self, Odometry, '/odom_gt')
-
-        self.tf_sync = ApproximateTimeSynchronizer(
-            [self.odom_tf_sub, self.gt_tf_sub],
-            queue_size=30,
-            slop=0.05)
-        self.tf_sync.registerCallback(self.publish_corrected_tf)
-
         # Start/stop service
         self.create_service(SetBool, '/pure_pursuit/enable', self.enable_callback)
-
-        # Publish path
-        self.publish_path()
 
         # Loop control - 10 Hz
         self.create_timer(0.1, self.control_loop)
@@ -116,7 +92,9 @@ class PurePursuit(Node):
         self.last_odom_time = self.get_clock().now()
 
     def get_lookahead(self):
-        ld = self.ld_time * abs(self.v)
+        speed_ratio = min(abs(self.v) / self.v_desired, 1.0)
+        ld = self.ld_min + (self.ld_max - self.ld_min) * speed_ratio**2
+
         return max(self.ld_min, min(self.ld_max, ld))
 
     def nearest_segment(self):
@@ -189,6 +167,9 @@ class PurePursuit(Node):
         start_index, start_t = self.nearest_segment()
         self.waypoint_index = start_index
 
+        heading_x = math.cos(self.yaw)
+        heading_y = math.sin(self.yaw)
+
         for offset in range(n):
             i = (start_index + offset) % n
 
@@ -203,6 +184,10 @@ class PurePursuit(Node):
 
                 x = p1[0] + t * (p2[0] - p1[0])
                 y = p1[1] + t * (p2[1] - p1[1])
+
+                local_x = (x - self.x) * heading_x + (y - self.y) * heading_y
+                if local_x <= 1e-6:
+                    continue
 
                 return (x, y)
 
@@ -221,11 +206,18 @@ class PurePursuit(Node):
 
         kappa = 2.0 * local_y / distance_sq
 
+        # Ograniczenie przyspieszenia bocznego
         v_curve = math.sqrt(self.ay_max / max(abs(kappa), 1e-6))
 
+        # Ograniczenie predkosci katowej
         v_omega = self.omega_max / max(abs(kappa), 1e-6)
 
-        v = min(self.v_desired, v_curve, v_omega)
+        # Dodatkowe zwalnianie na zakretach
+        curve_slowdown = 1.0 / (1.0 + 3.0 * abs(kappa))
+        v_adaptive = self.v_desired * curve_slowdown
+
+        v = min(self.v_desired, v_curve, v_omega, v_adaptive)
+
         omega = v * kappa
 
         return v, omega
@@ -235,22 +227,6 @@ class PurePursuit(Node):
         msg.linear.x = v
         msg.angular.z = omega
         self.cmd_pub.publish(msg)
-
-    def publish_path(self):
-        msg = PathMsg()
-        msg.header.frame_id = 'odom_gt'
-        msg.header.stamp = self.get_clock().now().to_msg()
-
-        for x, y in self.waypoints:
-            pose = PoseStamped()
-            pose.header = msg.header
-            pose.pose.position.x = x
-            pose.pose.position.y = y
-            pose.pose.orientation.w = 1.0
-            msg.poses.append(pose)
-
-        msg.poses.append(msg.poses[0])
-        self.path_pub.publish(msg)
 
     def make_marker(self, marker_id, marker_type):
         marker = Marker()
@@ -300,36 +276,6 @@ class PurePursuit(Node):
         line.points = [start, end]
 
         self.line_pub.publish(line)
-
-    def publish_corrected_tf(self, odom, gt):
-        if (odom.header.frame_id != 'odom' or gt.header.frame_id != 'odom_gt'
-            or odom.child_frame_id != 'base_footprint' or gt.child_frame_id != 'base_footprint'):
-            return
-
-        op = odom.pose.pose
-        gp = gt.pose.pose
-
-        angle = self.get_yaw(gp.orientation) - self.get_yaw(op.orientation)
-
-        c = math.cos(angle)
-        s = math.sin(angle)
-
-        x = gp.position.x - c * op.position.x + s * op.position.y
-        y = gp.position.y - s * op.position.x - c * op.position.y
-
-        tf = TransformStamped()
-        tf.header.stamp = gt.header.stamp
-        tf.header.frame_id = 'odom_gt'
-        tf.child_frame_id = 'odom'
-
-        tf.transform.translation.x = x
-        tf.transform.translation.y = y
-        tf.transform.translation.z = gp.position.z - op.position.z
-
-        tf.transform.rotation.z = math.sin(angle / 2.0)
-        tf.transform.rotation.w = math.cos(angle / 2.0)
-
-        self.tf_broadcaster.sendTransform(tf)
 
     def enable_callback(self, request, response):
         self.running = request.data
