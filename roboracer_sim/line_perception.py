@@ -75,7 +75,7 @@ class LinePerception(Node):
 
                 cv2.circle(frame, (int(u), int(v)), 5, (0, 255, 0), -1)
 
-        # 1. Publikacja lokalnej ścieżki (dla Pure Pursuit i RViz)
+        # Publikacja lokalnej ścieżki (dla Pure Pursuit i RViz)
         path_msg = PathMsg()
         path_msg.header.stamp = msg.header.stamp
         path_msg.header.frame_id = 'base_footprint'
@@ -88,7 +88,7 @@ class LinePerception(Node):
             path_msg.poses.append(pose)
         self.path_pub.publish(path_msg)
 
-        # 2. Publikacja uchybów (dla PID i Stanleya)
+        # Publikacja uchybów (dla PID i Stanleya)
         err_msg = Vector3Stamped()
         err_msg.header.stamp = msg.header.stamp
         err_msg.header.frame_id = 'base_footprint'
@@ -121,7 +121,7 @@ class LinePerception(Node):
             err_msg.vector.z = 1.0
         else:
             err_msg.vector.z = 0.0          # 0.0 = zgubiono linię
-            
+
         self.error_pub.publish(err_msg)
         self.debug_pub.publish(self.bridge.cv2_to_imgmsg(frame, encoding='bgr8'))
 
