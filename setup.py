@@ -49,6 +49,7 @@ setup(
             'evaluate_run = roboracer_sim.evaluate_run:main',
             'pure_pursuit = roboracer_sim.pure_pursuit:main',
             'track_viz = roboracer_sim.track_viz:main',
+            'line_perception = roboracer_sim.line_perception:main',
         ],
     },
 )
