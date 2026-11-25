@@ -111,16 +111,13 @@ def generate_launch_description():
     )
 
     ########### REGULATOR PURE PURSUIT #########
-    # Uruchamiany tylko gdy controller:=pure_pursuit; enabled=true startuje od razu
+    # Uruchamiany tylko gdy controller:=pure_pursuit
     pure_pursuit_node = Node(
         package='roboracer_sim',
         executable='pure_pursuit',
         name='pure_pursuit',
         output='screen',
-        parameters=[{
-            'use_sim_time': True,
-            'enabled': True,
-        }],
+        parameters=[{'use_sim_time': True}],
         condition=IfCondition(
             PythonExpression([
                 "'", LaunchConfiguration('controller'), "' == 'pure_pursuit'"

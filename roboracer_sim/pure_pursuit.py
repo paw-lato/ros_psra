@@ -2,13 +2,13 @@
 import math
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 from geometry_msgs.msg import Point, Twist
 from nav_msgs.msg import Odometry
 from nav_msgs.srv import GetPlan
 from visualization_msgs.msg import Marker
-from std_srvs.srv import SetBool
 
 
 class PurePursuit(Node):
@@ -22,7 +22,6 @@ class PurePursuit(Node):
         self.declare_parameter('max_lateral_accel', 0.4)
         self.declare_parameter('max_angular_speed', 1.2)
         self.declare_parameter('odom_timeout', 0.5)
-        self.declare_parameter('enabled', False)
 
         self.ld_min = self.get_parameter('lookahead_min').value
         self.ld_max = self.get_parameter('lookahead_max').value
@@ -37,7 +36,6 @@ class PurePursuit(Node):
         self.yaw = None
         self.v = 0.0
         self.last_odom_time = None
-        self.running = bool(self.get_parameter('enabled').value)
 
         # Waypoints z track_viz (ten sam tor co w launchu)
         self.waypoints = self.load_waypoints()
@@ -53,14 +51,8 @@ class PurePursuit(Node):
         # Odometry
         self.create_subscription(Odometry, '/odom_gt', self.odom_callback, 10)
 
-        # Start/stop service
-        self.create_service(SetBool, '/pure_pursuit/enable', self.enable_callback)
-
         # Loop control - 10 Hz
         self.create_timer(0.1, self.control_loop)
-
-        if self.running:
-            self.get_logger().info('Pure Pursuit START (enabled=true)')
 
     def load_waypoints(self):
         client = self.create_client(GetPlan, '/track/get_path')
@@ -277,24 +269,7 @@ class PurePursuit(Node):
 
         self.line_pub.publish(line)
 
-    def enable_callback(self, request, response):
-        self.running = request.data
-
-        if not self.running:
-            self.publish_cmd(0.0, 0.0)
-
-        state = 'START' if self.running else 'STOP'
-        self.get_logger().info(f'Pure Pursuit {state}')
-
-        response.success = True
-        response.message = state
-
-        return response
-
     def control_loop(self):
-        if not self.running:
-            return
-
         if self.last_odom_time is None:
             self.publish_cmd(0.0, 0.0)
             return
@@ -325,13 +300,14 @@ def main(args=None):
     try:
         node = PurePursuit()
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         if node is not None:
-            node.publish_cmd(0.0, 0.0)
+            if rclpy.ok():
+                node.publish_cmd(0.0, 0.0)
             node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':
