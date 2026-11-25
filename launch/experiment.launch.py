@@ -16,15 +16,12 @@ from launch_ros.actions import Node
 def generate_launch_description():
     pkg_dir = get_package_share_directory('roboracer_sim')
 
-    ########### ARGUMENTY #########
-    # controller: pid | stanley | pure_pursuit
     controller_arg = DeclareLaunchArgument(
         'controller',
         default_value='pid',
         description='Regulator: pid, stanley albo pure_pursuit',
         choices=['pid', 'stanley', 'pure_pursuit'],
     )
-    # easy=true → linefollower_track_easy, easy=false → linefollower_track
     easy_arg = DeclareLaunchArgument(
         'easy',
         default_value='true',
@@ -36,36 +33,35 @@ def generate_launch_description():
         "' == 'true' else 'linefollower_track'",
     ])
     rviz_arg = DeclareLaunchArgument(
-        'rviz',
-        default_value='true',
-        description='Czy uruchomić RViz',
+        'rviz', default_value='true', description='Czy uruchomić RViz',
     )
     gui_arg = DeclareLaunchArgument(
-        'gui',
-        default_value='true',
+        'gui', default_value='true',
         description='Czy pokazać okno Gazebo (false = headless)',
     )
     body_arg = DeclareLaunchArgument(
-        'body',
-        default_value='shell',
-        choices=['shell', 'open'],
+        'body', default_value='shell', choices=['shell', 'open'],
         description='Wygląd nadwozia',
     )
     model_arg = DeclareLaunchArgument(
-        'model',
-        default_value='gym',
-        choices=['classic', 'gym'],
+        'model', default_value='gym', choices=['classic', 'gym'],
         description='Wariant modelu: classic (STL) albo gym (GLB)',
     )
-    # Przekazywane do simulation.launch.py → gz service set_physics
     rtf_arg = DeclareLaunchArgument(
-        'rtf',
-        default_value='1.0',
+        'rtf', default_value='1.0',
         description='Gazebo real_time_factor (1=realtime, >1 szybciej, 0=max)',
     )
+    # gt = CSV /track/get_path, camera = line_perception
+    path_source_arg = DeclareLaunchArgument(
+        'path_source',
+        default_value='gt',
+        choices=['gt', 'camera'],
+        description='Źródło ścieżki: gt (CSV) albo camera (line_perception)',
+    )
+    use_camera = PythonExpression([
+        "'true' if '", LaunchConfiguration('path_source'), "' == 'camera' else 'false'",
+    ])
 
-    ########### SYMULACJA (Gazebo + mostek + robot) #########
-    # Nie kopiujemy logiki — tylko includujemy gotowy launch.
     simulation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_dir, 'launch', 'simulation.launch.py')
@@ -80,14 +76,28 @@ def generate_launch_description():
         }.items(),
     )
 
-    ########### REGULATOR PID #########
-    # Uruchamiany tylko gdy controller:=pid
+    line_perception_node = Node(
+        package='roboracer_sim',
+        executable='line_perception',
+        name='line_perception',
+        output='screen',
+        parameters=[{'use_sim_time': True}],
+        condition=IfCondition(
+            PythonExpression([
+                "'", LaunchConfiguration('path_source'), "' == 'camera'"
+            ])
+        ),
+    )
+
     pid_node = Node(
         package='roboracer_sim',
         executable='roboracer_pid',
         name='roboracer_pid',
         output='screen',
-        parameters=[{'use_sim_time': True}],
+        parameters=[{
+            'use_sim_time': True,
+            'use_camera': use_camera,
+        }],
         condition=IfCondition(
             PythonExpression([
                 "'", LaunchConfiguration('controller'), "' == 'pid'"
@@ -95,14 +105,15 @@ def generate_launch_description():
         ),
     )
 
-    ########### REGULATOR STANLEY #########
-    # Uruchamiany tylko gdy controller:=stanley
     stanley_node = Node(
         package='roboracer_sim',
         executable='control_stanley',
         name='control_stanley',
         output='screen',
-        parameters=[{'use_sim_time': True}],
+        parameters=[{
+            'use_sim_time': True,
+            'path_source': LaunchConfiguration('path_source'),
+        }],
         condition=IfCondition(
             PythonExpression([
                 "'", LaunchConfiguration('controller'), "' == 'stanley'"
@@ -110,14 +121,15 @@ def generate_launch_description():
         ),
     )
 
-    ########### REGULATOR PURE PURSUIT #########
-    # Uruchamiany tylko gdy controller:=pure_pursuit
     pure_pursuit_node = Node(
         package='roboracer_sim',
         executable='pure_pursuit',
         name='pure_pursuit',
         output='screen',
-        parameters=[{'use_sim_time': True}],
+        parameters=[{
+            'use_sim_time': True,
+            'path_source': LaunchConfiguration('path_source'),
+        }],
         condition=IfCondition(
             PythonExpression([
                 "'", LaunchConfiguration('controller'), "' == 'pure_pursuit'"
@@ -125,8 +137,6 @@ def generate_launch_description():
         ),
     )
 
-    ########### EWALUACJA #########
-    # Subskrybuje /odom_gt, porównuje z line_gt.csv wybranego toru, raport co 10 s.
     evaluate_node = Node(
         package='roboracer_sim',
         executable='evaluate_run',
@@ -141,7 +151,6 @@ def generate_launch_description():
         }],
     )
 
-    ########### LISTA AKCJI LAUNCH #########
     return LaunchDescription([
         controller_arg,
         easy_arg,
@@ -150,7 +159,9 @@ def generate_launch_description():
         body_arg,
         model_arg,
         rtf_arg,
+        path_source_arg,
         simulation,
+        line_perception_node,
         pid_node,
         stanley_node,
         pure_pursuit_node,

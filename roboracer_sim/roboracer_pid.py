@@ -1,13 +1,11 @@
 import math
 
 import rclpy
-from geometry_msgs.msg import PoseStamped, Twist
+from geometry_msgs.msg import PoseStamped, Twist, Vector3Stamped
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path as PathMsg
 from nav_msgs.srv import GetPlan
 from rclpy.node import Node
-
-from geometry_msgs.msg import PoseStamped, Twist, Vector3Stamped
 
 
 class HeadingPid(Node):
@@ -19,33 +17,21 @@ class HeadingPid(Node):
         self.declare_parameter('ki', 0.5)
         self.declare_parameter('kd', 0.3)
         self.declare_parameter('waypoint_tolerance', 1.0)
+        # True gdy experiment path_source:=camera
         self.declare_parameter('use_camera', False)
 
-        self.waypoints = self.load_waypoints()
-        if not self.waypoints:
-            raise RuntimeError('Serwis /track/get_path nie zwrócił waypointów.')
-
+        self.use_camera = bool(self.get_parameter('use_camera').value)
         self.waypoint_index = 0
         self.integral = 0.0
         self.previous_error = None
         self.previous_time = None
-
-        self.path_msg = PathMsg()
-        self.path_msg.header.frame_id = 'odom_gt'
-        for x, y in self.waypoints:
-            pose = PoseStamped()
-            pose.header.frame_id = 'odom_gt'
-            pose.pose.position.x = x
-            pose.pose.position.y = y
-            pose.pose.orientation.w = 1.0
-            self.path_msg.poses.append(pose)
+        self.waypoints = []
 
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
-        use_camera = bool(self.get_parameter('use_camera').value)
 
-        if use_camera:
+        if self.use_camera:
             self.get_logger().info('Tryb: percepcja z kamery (/perception/line_error)')
-            self.subscription = self.create_subscription(
+            self.create_subscription(
                 Vector3Stamped,
                 '/perception/line_error',
                 self.on_line_error,
@@ -53,10 +39,10 @@ class HeadingPid(Node):
             )
         else:
             self.get_logger().info('Tryb: waypointy z CSV (/track/get_path + /odom_gt)')
-            self.waypoints = self.load_waypoints()
+            self.waypoints = list(self.load_waypoints())
             if not self.waypoints:
                 raise RuntimeError('Serwis /track/get_path nie zwrócił waypointów.')
-            self.waypoint_index = 0
+
             self.path_msg = PathMsg()
             self.path_msg.header.frame_id = 'odom_gt'
             for x, y in self.waypoints:
@@ -66,13 +52,9 @@ class HeadingPid(Node):
                 pose.pose.position.y = y
                 pose.pose.orientation.w = 1.0
                 self.path_msg.poses.append(pose)
+
             self.path_pub = self.create_publisher(PathMsg, '/pid/path', 10)
-            self.subscription = self.create_subscription(
-                Odometry,
-                '/odom_gt',
-                self.on_odom,
-                10,
-            )
+            self.create_subscription(Odometry, '/odom_gt', self.on_odom, 10)
 
             def send_path():
                 self.path_msg.header.stamp = self.get_clock().now().to_msg()
@@ -81,7 +63,6 @@ class HeadingPid(Node):
             self.create_timer(1.0, send_path)
 
     def load_waypoints(self):
-        # Waypointy z track_viz — ten sam tor co w launchu (easy / track).
         client = self.create_client(GetPlan, '/track/get_path')
         while rclpy.ok() and not client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Czekam na serwis /track/get_path...')
@@ -121,15 +102,14 @@ class HeadingPid(Node):
         self.compute_pid(error)
 
     def on_line_error(self, msg: Vector3Stamped):
+        # z < 0.5 tylko gdy naprawdę brak ścieżki (recovery ma z=0.5)
         if msg.vector.z < 0.5:
-            # Zgubiono linię w kamerze: zwolnij i skręcaj w stronę ostatniego błędu
             command = Twist()
             command.linear.x = float(self.get_parameter('speed').value) * 0.5
             if self.previous_error is not None:
                 command.angular.z = 0.4 if self.previous_error > 0 else -0.4
             self.publisher.publish(command)
             return
-        # vector.y to heading_err wyliczony w line_perception.py
         error = self.wrap_angle(msg.vector.y)
         self.compute_pid(error)
 
@@ -150,12 +130,22 @@ class HeadingPid(Node):
             + float(self.get_parameter('kd').value) * derivative
         )
         angular_speed = max(-0.5, min(0.5, angular_speed))
+
+        speed = float(self.get_parameter('speed').value)
+        # Ostry zakręt → zwolnij
+        turn_factor = max(0.2, math.cos(error) ** 2)
+        if self.use_camera:
+            speed = min(speed, 0.25) * turn_factor
+        else:
+            speed = speed * max(0.35, turn_factor)
+
         command = Twist()
-        command.linear.x = float(self.get_parameter('speed').value)
+        command.linear.x = speed
         command.angular.z = angular_speed
         self.publisher.publish(command)
         self.previous_time = now
         self.previous_error = error
+
 
 def main(args=None):
     rclpy.init(args=args)

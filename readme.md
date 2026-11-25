@@ -14,7 +14,7 @@ rm -rf build/ install/ log/
 unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH
 source /opt/ros/jazzy/setup.bash
 
-colcon build --symlink-install
+colcon build --symlink-install --merge-install
 
 source install/setup.bash
 
@@ -50,12 +50,21 @@ ros2 launch roboracer_sim experiment.launch.py controller:=pure_pursuit
 ### 7. Pure Pursuit na torze trudnym
 ros2 launch roboracer_sim experiment.launch.py controller:=pure_pursuit easy:=false
 
-### 8. NEW - PERCEPCJA Z KAMERY
-ros2 run roboracer_sim line_perception
-PID z kamerą:
-ros2 run roboracer_sim roboracer_pid --ros-args -p use_camera:=true
-PID z csv:
-ros2 run roboracer_sim roboracer_pid
+### 8. Kamera zamiast CSV (line_perception)
+ros2 launch roboracer_sim experiment.launch.py controller:=pid path_source:=camera
+ros2 launch roboracer_sim experiment.launch.py controller:=pure_pursuit path_source:=camera
+ros2 launch roboracer_sim experiment.launch.py controller:=stanley path_source:=camera
+
+Debug obrazu: `/perception/debug_image`  
+Ścieżka lokalna: `/perception/local_path`  
+Uchyb (PID): `/perception/line_error`
+
+
+## --- Źródło ścieżki (`path_source`) ---
+
+- `path_source:=gt` (domyślne) → `/track/get_path` (CSV toru)
+- `path_source:=camera` → startuje `line_perception`; PID dostaje `use_camera:=true` (`/perception/line_error`), Stanley/PP biorą `/perception/local_path`
+
 
 ## --- Wybór toru ---
 
@@ -71,30 +80,3 @@ ros2 launch roboracer_sim simulation.launch.py track:=linefollower_track
 Tory:
 - `linefollower_track_easy`
 - `linefollower_track` (domyślny w simulation)
-
-Dodanie autmatycznego pobierania waypointów
-
-W `__init__` robimy zapytnaie o ścieżkę do `/track/get_path` podajemy do waypoints i otrzymujemy pełną listę waypointów w metrach:
-
-((0.0, 0.0),
- 
- (0.0779806, 0.0),
- 
- (0.1559611, 0.0),
- 
- ...)
-
-```python
-from nav_msgs.srv import GetPlan
-
-# w __init__:
-client = self.create_client(GetPlan, '/track/get_path')
-while rclpy.ok() and not client.wait_for_service(timeout_sec=1.0):
-    self.get_logger().info('Czekam na serwis /track/get_path...')
-
-future = client.call_async(GetPlan.Request())
-rclpy.spin_until_future_complete(self, future)
-self.waypoints = tuple(
-    (p.pose.position.x, p.pose.position.y) for p in future.result().plan.poses
-)
-```
