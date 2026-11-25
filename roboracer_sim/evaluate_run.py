@@ -277,17 +277,19 @@ class EvaluateRun(Node):
             f'------------------------------------'
         )
 
-    ########### RAPORT KOŃCOWY (1 OKRĄŻENIE) #########
+    ########### RAPORT KOŃCOWY #########
     def print_final_report(self):
         e = self.lateral_errors
         v = self.speeds
         t = self.elapsed_seconds()
         avg_v = self.distance_traveled / t if t > 1e-6 else 0.0
+        title = 'RAPORT KOŃCOWY (1 okrążenie)' if self.finished else 'RAPORT CZĘŚCIOWY'
+        time_label = 'czas okrążenia [s]' if self.finished else 'czas pomiaru [s]'
 
         self.get_logger().info(
-            '========== RAPORT KOŃCOWY (1 okrążenie) ==========\n'
+            f'========== {title} ==========\n'
             f'  controller           : {self.controller_name}\n'
-            f'  czas okrążenia [s]   : {t:.2f}\n'
+            f'  {time_label:<21}: {t:.2f}\n'
             f'  próbki               : {self.sample_count}\n'
             f'  -- błąd poprzeczny (CTE) --\n'
             f'  RMSE [m]             : {rmse(e):.4f}\n'
